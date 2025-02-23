@@ -50,17 +50,21 @@ class AudioFormatHandler:
         convert the audio chunks to numpy array
         """
         try:
-            audio_segment = AudioSegment.from_file(
-                audio_chunks_collection, 
-                format= audio_format.mime_type,
-                codec= audio_format.codec,
-                parameters= [
-                        "-loglevel", "debug", 
-                        "-ar", str(audio_format.sample_rate),
-                        "-ac", "1",  
-                        "-vn"
-                    ]
-                )
+            audio_stream = b"".join(chunk for chunk in audio_chunks_collection)
+
+            audio_segment = AudioSegment.from_file(BytesIO(audio_stream), format=audio_format.mime_type)
+
+            # audio_segment = AudioSegment.from_file(
+            #     audio_chunks_collection, 
+            #     format= audio_format.mime_type,
+            #     codec= audio_format.codec,
+            #     parameters= [
+            #             "-loglevel", "debug", 
+            #             "-ar", str(audio_format.sample_rate),
+            #             "-ac", "1",  
+            #             "-vn"
+            #         ]
+            #     )
             
             # convert to numpy array 
             samples = np.array(audio_segment.get_array_of_samples(), dtype=np.float32)

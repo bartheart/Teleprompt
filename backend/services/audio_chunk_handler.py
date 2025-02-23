@@ -5,6 +5,7 @@ from io import BytesIO
 import logging
 import pytest
 import time 
+import struct 
 
 
 
@@ -25,6 +26,8 @@ class AudioChunk:
     sequence_number: int
     audio_data: bytes
     timestamp: float 
+    header: bytes 
+    metadata: dict
 
 
 
@@ -37,6 +40,10 @@ class AudioChunkHandler:
         self.sequence_counter = 0
         self.min_chunk_to_process = 10
         self.logger = logging.getLogger(__name__)
+
+    
+    def generate_header(self, sample_rate=16000, channels=1, bit_depth=16):
+        pass
 
     
     def add_chunk_to_queue(self, audio_chunk: bytes, timestamp: float) -> int:

@@ -48,8 +48,9 @@ class QueueService:
                 chunk = self.queue.get_nowait()
                 chunks.append(chunk)
             except asyncio.QueueEmpty:
-                self.logger.error("Queue is empty")
-                raise QueueEmptyError("Queue is empty")
+                #self.logger.error("Queue is empty")
+                #raise QueueEmptyError("Queue is empty")
+                break
         return chunks
 
 

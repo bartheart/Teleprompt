@@ -6,7 +6,7 @@ from services.audio_chunk_handler import AudioChunkHandler
 from services.audio_transcriber import AudioTranscriber
 from services.audio_format_handler import AudioFormatHandler, AudioFormat
 from services.context_manager import ContextManager
-from services.audio_processor import AudioProcessor, ProcessingError
+from backend.services.audio_processor_1 import AudioProcessor, ProcessingError
 
 @pytest.fixture
 def mock_components():

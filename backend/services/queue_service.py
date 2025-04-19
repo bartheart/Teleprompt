@@ -87,8 +87,8 @@ class TestQueueService(unittest.TestCase):
         self.assertTrue(self.queue_service.queue.qsize(), 0)
 
     async def test_remove_from_empty_queue(self):
-        with self.assertRaises(QueueEmptyError):
-            await self.queue_service.remove_batch_from_queue(2)
+        chunks = await self.queue_service.remove_batch_from_queue(2)
+        self.assertEqual(self.queue_service.queue, [])
 
     def run_async(self, test_func):
         loop = asyncio.get_event_loop()

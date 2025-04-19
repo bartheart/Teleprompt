@@ -9,7 +9,7 @@ from services.audio_chunk_handler import AudioChunkHandler
 from services.audio_format_handler import AudioFormatHandler
 from services.audio_transcriber import AudioTranscriber
 from services.context_manager import ContextManager
-from services.audio_processor import AudioProcessor
+from backend.services.audio_processor_1 import AudioProcessor
 
 # setup logging 
 logging.basicConfig(level=logging.DEBUG)  

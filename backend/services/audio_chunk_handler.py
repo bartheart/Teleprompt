@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from queue import Queue, Empty, Full
 from typing import Optional, Tuple
 from io import BytesIO
 import logging
@@ -19,36 +18,28 @@ class ChunkProcessingError(Exception):
     pass
 
 @dataclass 
-class AudioChunk:
-    """
-    define the data structure for the audio chunk
-    """
-    sequence_number: int
-    audio_data: bytes
-    timestamp: float 
-    header: bytes 
-    metadata: dict
+class BufferConfig:
+    min_chunks_to_process: int = 10
+    max_buffer_size: int = 1024 * 1024
+    sample_rate: int = 16000
+    channels: int = 1
+    bit_depth: int = 16
 
 
-
-class AudioChunkHandler:
+class BufferManager:
     """
-    handle audio chunks
+    manage the audio buffer
     """
-    def __init__ (self):
-        self.buffer_queue = Queue(maxsize=40)
-        self.sequence_counter = 0
-        self.min_chunk_to_process = 10
+    def __init__ (self, config: BufferConfig = BufferConfig()):
+        self.config = config
+        self.buffer = BytesIO()
+        self.current_size = 0
         self.logger = logging.getLogger(__name__)
 
     
-    def generate_header(self, sample_rate=16000, channels=1, bit_depth=16):
-        pass
-
-    
-    def add_chunk_to_queue(self, audio_chunk: bytes, timestamp: float) -> int:
+    def accumulate(self, audio_chunks: list[AudioChunk]) -> Optional[bytes]:
         """      
-        add the audio chunk to the buffer queue
+        accumulate the audio chunks in the buffer
         """
         try:
             chunk = AudioChunk(self.sequence_counter, audio_chunk, timestamp)

@@ -1,0 +1,24 @@
+name: reusable workflow 
+
+on:
+    workflow_call:
+        inputs:
+            user-name:
+                type: string 
+                required: true 
+
+
+jobs:
+    Repo-check:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout code 
+            uses: actions/checkout@v4
+
+
+    Print-Call:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Print message 
+            run: echo "Mamamia, a reusable workflow has been called by ${{ inputs.user-name }}"
+            

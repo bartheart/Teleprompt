@@ -47,8 +47,9 @@ class AudioQueue:
                 dequeued_audio_chunk = self._dequeue()
             except Exception as e:
                 self.logger.error("Error dequeueing an auido chunk: {e}")
-
+                return 
             audio_chunk_batch.append(dequeued_audio_chunk)
+            
         return audio_chunk_batch
 
 

@@ -32,6 +32,9 @@ class AudioDispatcher:
         except Exception as e:
             self.logger.error("Error adding audio chunk to queue: {e}")
 
+    def get_queue_depth (self) -> int:
+        return self.queue.qsize()
+
 
 # test the intiatlizatipon of dispatcher class 
 @pytest.fixture 

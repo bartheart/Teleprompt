@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import router as api_router, socket_app
+import socketio
+from routes import router as api_router, sio
 
 
 app = FastAPI()
@@ -15,5 +16,5 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-# mount the socket io app in the root 
-app = socket_app
+# mount the socket io app in the root
+app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)

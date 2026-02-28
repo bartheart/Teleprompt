@@ -12,8 +12,8 @@ router = APIRouter()
 sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins="*",
-    logger=True,
-    engineio_logger=True,
+    logger=False,
+    engineio_logger=False,
 )
 
 model = whisper.load_model("turbo")
@@ -40,6 +40,7 @@ class SessionState:
         self.context = ""
         self.mime_extension = "webm"
         self.audio_buffer = BytesIO()
+        self.last_processed_byte = 0
         self.is_processing = False
         self.transcript_history: List[str] = []
         self.prediction_count = DEFAULT_PREDICTION_COUNT
@@ -111,8 +112,12 @@ async def audio_data(sid, data: bytes):
     if not state or state.is_processing:
         return
 
+    # Always append at the end. Decoding seeks to 0, so without this
+    # we would overwrite the stream header and break WebM parsing.
+    state.audio_buffer.seek(0, 2)
     state.audio_buffer.write(data)
-    if state.audio_buffer.tell() < BUFFER_MIN_BYTES:
+    current_size = state.audio_buffer.tell()
+    if current_size - state.last_processed_byte < BUFFER_MIN_BYTES:
         return
 
     state.is_processing = True
@@ -126,7 +131,11 @@ async def audio_data(sid, data: bytes):
         )
 
         samples = np.array(audio_segment.get_array_of_samples(), dtype=np.float32) / 32768.0
-        transcription = model.transcribe(samples).get("text", "").strip()
+        # Decode a rolling tail window to keep latency down while preserving
+        # valid container headers from the beginning of the stream.
+        tail_window = SAMPLE_RATE * 5
+        samples_for_asr = samples[-tail_window:] if len(samples) > tail_window else samples
+        transcription = model.transcribe(samples_for_asr).get("text", "").strip()
 
         if transcription:
             state.transcript_history.append(transcription)
@@ -141,8 +150,9 @@ async def audio_data(sid, data: bytes):
             )
             await sio.emit("predictions", {"items": predictions}, room=sid)
 
+        state.last_processed_byte = current_size
+
     except Exception as exc:  # pragma: no cover - runtime safety for live pipeline
         await sio.emit("server_error", {"message": str(exc)}, room=sid)
     finally:
-        state.audio_buffer = BytesIO()
         state.is_processing = False

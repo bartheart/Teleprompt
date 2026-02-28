@@ -5,28 +5,34 @@ type PrompterProps = {
 
 export default function Prompter({ transcripts, predictions }: PrompterProps) {
   return (
-    <div>
-      <h2>Live Transcript</h2>
-      {transcripts.length === 0 ? (
-        <p>No transcript yet. Start speaking to see updates.</p>
-      ) : (
-        <ul>
-          {transcripts.slice(-6).map((line, index) => (
-            <li key={`${line}-${index}`}>{line}</li>
-          ))}
-        </ul>
-      )}
+    <div className="content-grid">
+      <section>
+        <h2 className="panel-title">Live Transcript</h2>
+        <div className="log-box">
+          {transcripts.length === 0 ? (
+            <p className="muted">No transcript yet. Start and speak to stream text.</p>
+          ) : (
+            transcripts.slice(-8).map((line, index) => (
+              <p className="line" key={`${line}-${index}`}>
+                {line}
+              </p>
+            ))
+          )}
+        </div>
+      </section>
 
-      <h2>Suggested Next Phrases</h2>
-      {predictions.length === 0 ? (
-        <p>No suggestions yet.</p>
-      ) : (
-        <ul>
-          {predictions.map((item, index) => (
-            <li key={`${item}-${index}`}>{item}</li>
-          ))}
-        </ul>
-      )}
+      <section>
+        <h2 className="panel-title">Suggested Phrases</h2>
+        {predictions.length === 0 ? (
+          <p className="muted">No suggestions yet.</p>
+        ) : (
+          <ul className="suggestions">
+            {predictions.map((item, index) => (
+              <li key={`${item}-${index}`}>{item}</li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   );
 }

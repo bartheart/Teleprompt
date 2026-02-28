@@ -17,9 +17,11 @@ export default function Recorder({
   onPredictions,
   active,
 }: RecorderProps) {
-    const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const audioRef = useRef<MediaRecorder | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+    const startInFlightRef = useRef(false);
+    const wasActiveRef = useRef(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const socket = useRef<Socket | null >(null);
     const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -48,10 +50,8 @@ export default function Recorder({
 
         const newSocket = io("http://127.0.0.1:8000", {
             transports: ['websocket'],
-            autoConnect: true,
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
+            autoConnect: false,
+            reconnection: false,
         });
 
         newSocket.on('connect_error', (error) => {
@@ -86,14 +86,64 @@ export default function Recorder({
 
 
 
-    const startRecording = useCallback((stream: MediaStream) => {
-        if (!stream) return;
+    const stopRecording = useCallback(() => {
+        startInFlightRef.current = false;
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+            mediaRecorderRef.current.stop();
+        }
+        mediaRecorderRef.current = null;
 
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+        }
+        streamRef.current = null;
+
+        if (socket.current?.connected) {
+            socket.current.disconnect();
+        }
+        setIsRecording(false);
+    }, []);
+
+    const startRecording = useCallback(async () => {
+        if (startInFlightRef.current || isRecording || mediaRecorderRef.current) {
+            return;
+        }
+
+        startInFlightRef.current = true;
+        setError(null);
         try {
-            const mimeType = getCompatibleMime();
+            const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+            streamRef.current = stream;
 
-            if (!mimeType){
+            const mimeType = getCompatibleMime();
+            if (!mimeType) {
                 throw new Error("No supported audio MIME type found");
+            }
+
+            const recorder = new MediaRecorder(stream, { mimeType });
+            mediaRecorderRef.current = recorder;
+
+            recorder.onstart = () => setIsRecording(true);
+            recorder.onstop = () => setIsRecording(false);
+            recorder.onerror = () => {
+                setError("Recorder error occurred while capturing audio.");
+                setIsRecording(false);
+            };
+            recorder.ondataavailable = (event) => {
+                if (socket.current?.connected && event.data.size > 0) {
+                    socket.current.emit("audio_data", event.data);
+                }
+            };
+
+            recorder.start(100);
+            if (recorder.state !== "recording") {
+                throw new Error("Recorder failed to start.");
             }
 
             initializeSocket();
@@ -103,101 +153,45 @@ export default function Recorder({
                     context,
                     predictionCount,
                 });
-                socket.current.emit('mime_type', mimeType);
-            };
-
-            const options = { 
-                mimeType: mimeType,
-                audioBitsPerSecond: 16000,  
-                channelCount: 1 
-            };
-
-            const recordedMedia = new MediaRecorder(stream, options);
-            audioRef.current = recordedMedia;
-
-            recordedMedia.ondataavailable = (event) => {
-                const audioChunk = event.data;
-                if (socket.current?.connected && audioChunk.size > 0){
-                    socket.current.emit('audio_data', audioChunk)
-                }
-            };
-
-            recordedMedia.start(100);
-
-            setIsRecording(true);
-
+                socket.current.emit("mime_type", mimeType);
+            }
         } catch (err) {
-            setError("Error starting recording: " + (err as Error).message);
-            console.error("Error starting recording:", err);
+            const message = (err as Error).message || "Failed to start microphone.";
+            setError(message);
+            stopRecording();
+        } finally {
+            startInFlightRef.current = false;
         }
-    }, [context, predictionCount, initializeSocket]);
-
-
-    const cleanUp = useCallback(() => {
-        if (audioRef.current?.state === 'recording') {
-            audioRef.current.stop();
-        };
-        audioRef.current = null;
-
-        if (audioStream) {
-            audioStream.getTracks().forEach((track) => track.stop());
-            setAudioStream(null);
-        };
-
-        if (socket.current?.connected) {
-            socket.current.disconnect();
-        }
-
-        setIsRecording(false);
-
-    }, [audioStream]);
-
-    const handleButton = useCallback(async (shouldStart: boolean) => {
-        if (!shouldStart && isRecording) {
-            cleanUp();
-        } else {
-            try {
-                const stream: MediaStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
-                });
-                setAudioStream(stream);
-                await startRecording(stream);
-    
-            } catch (err) {
-                const errorMessage = (err as Error).message || "An unknown eror";
-                setError(errorMessage);
-            };
-            
-        } 
-    }, [cleanUp, isRecording, startRecording]);
+    }, [context, predictionCount, initializeSocket, isRecording, stopRecording]);
 
     useEffect(() => {
-        if (active && !isRecording) {
-            void handleButton(true);
-        } else if (!active && isRecording) {
-            void handleButton(false);
+        if (active && !wasActiveRef.current) {
+            void startRecording();
         }
-    }, [active, isRecording, handleButton]);
+        if (!active && wasActiveRef.current) {
+            stopRecording();
+        }
+        wasActiveRef.current = active;
+    }, [active, startRecording, stopRecording]);
 
-    useEffect (() => {
-        
+    useEffect(() => {
         return () => {
-            cleanUp();
+            stopRecording();
             socket.current = null;
         };
-    }, [cleanUp]);
+    }, [stopRecording]);
 
     return (
         <div>
-            <div>
-                <p>Socket status: {isConnected ? 'Connected' : 'Disconnected'}</p>
+            <div className="status-row">
+                <p className={`pill ${isConnected ? "ok" : "warn"}`}>
+                    Socket: {isConnected ? "Connected" : "Disconnected"}
+                </p>
+                <p className={`pill ${isRecording ? "ok" : ""}`}>
+                    Recorder: {isRecording ? "Recording" : "Idle"}
+                </p>
             </div>
-            <p>Recorder state: {isRecording ? "Recording" : "Idle"}</p>
-            {error && <p>{error}</p>}
+            {error && <p className="error">{error}</p>}
         </div>
     );
 };

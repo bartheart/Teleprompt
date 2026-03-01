@@ -18,32 +18,15 @@ export default function Recorder({
   active,
 }: RecorderProps) {
     const [error, setError] = useState<string | null>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const startInFlightRef = useRef(false);
     const wasActiveRef = useRef(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const socket = useRef<Socket | null >(null);
     const [isConnected, setIsConnected] = useState<boolean>(false);
-
-    const getCompatibleMime = () => {
-        const types = [
-            'audio/webm',
-            'audio/webm;codecs=opus',
-            'audio/mp4',
-            'audio/mp4;codecs=opus',
-            'audio/ogg',
-            'audio/ogg;codecs=opus'
-        ];
-
-        for (const type of types) {
-            if (MediaRecorder.isTypeSupported(type)) {
-                return type;
-            }
-        }
-
-        return null;
-    };
 
     const initializeSocket = useCallback(() => {
         if (socket.current) return;
@@ -88,15 +71,27 @@ export default function Recorder({
 
     const stopRecording = useCallback(() => {
         startInFlightRef.current = false;
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-            mediaRecorderRef.current.stop();
+
+        if (processorRef.current) {
+            processorRef.current.disconnect();
+            processorRef.current.onaudioprocess = null;
         }
-        mediaRecorderRef.current = null;
+        processorRef.current = null;
+
+        if (sourceNodeRef.current) {
+            sourceNodeRef.current.disconnect();
+        }
+        sourceNodeRef.current = null;
 
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop());
         }
         streamRef.current = null;
+
+        if (audioContextRef.current) {
+            void audioContextRef.current.close();
+        }
+        audioContextRef.current = null;
 
         if (socket.current?.connected) {
             socket.current.disconnect();
@@ -105,7 +100,7 @@ export default function Recorder({
     }, []);
 
     const startRecording = useCallback(async () => {
-        if (startInFlightRef.current || isRecording || mediaRecorderRef.current) {
+        if (startInFlightRef.current || isRecording || processorRef.current) {
             return;
         }
 
@@ -121,31 +116,6 @@ export default function Recorder({
             });
             streamRef.current = stream;
 
-            const mimeType = getCompatibleMime();
-            if (!mimeType) {
-                throw new Error("No supported audio MIME type found");
-            }
-
-            const recorder = new MediaRecorder(stream, { mimeType });
-            mediaRecorderRef.current = recorder;
-
-            recorder.onstart = () => setIsRecording(true);
-            recorder.onstop = () => setIsRecording(false);
-            recorder.onerror = () => {
-                setError("Recorder error occurred while capturing audio.");
-                setIsRecording(false);
-            };
-            recorder.ondataavailable = (event) => {
-                if (socket.current?.connected && event.data.size > 0) {
-                    socket.current.emit("audio_data", event.data);
-                }
-            };
-
-            recorder.start(100);
-            if (recorder.state !== "recording") {
-                throw new Error("Recorder failed to start.");
-            }
-
             initializeSocket();
             if (socket.current) {
                 socket.current.connect();
@@ -153,8 +123,31 @@ export default function Recorder({
                     context,
                     predictionCount,
                 });
-                socket.current.emit("mime_type", mimeType);
             }
+
+            const audioContext = new AudioContext({ sampleRate: 16000 });
+            audioContextRef.current = audioContext;
+            const source = audioContext.createMediaStreamSource(stream);
+            sourceNodeRef.current = source;
+
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+            processorRef.current = processor;
+
+            processor.onaudioprocess = (event) => {
+                const input = event.inputBuffer.getChannelData(0);
+                const int16 = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i += 1) {
+                    const s = Math.max(-1, Math.min(1, input[i]));
+                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                }
+                if (socket.current?.connected) {
+                    socket.current.emit("audio_pcm", int16.buffer);
+                }
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+            setIsRecording(true);
         } catch (err) {
             const message = (err as Error).message || "Failed to start microphone.";
             setError(message);

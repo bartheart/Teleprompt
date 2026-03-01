@@ -2,7 +2,6 @@ fastapi==0.115.6
 uvicorn==0.34.0
 python-socketio==5.12.0
 numpy==2.0.2
-pydub==0.25.1
 openai-whisper==20240930
 setuptools>=70.0.0
 wheel>=0.45.0

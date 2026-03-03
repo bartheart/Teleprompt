@@ -24,7 +24,7 @@ export default function Home() {
 
   const predictionCount = useMemo(() => 5, []);
   const handleTranscript = useCallback((text: string) => {
-    setTranscripts((prev) => [...prev, text]);
+    setTranscripts(text ? [text] : []);
   }, []);
   const handlePredictions = useCallback((items: string[]) => {
     setPredictions(items);

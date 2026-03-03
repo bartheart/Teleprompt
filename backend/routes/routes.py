@@ -33,15 +33,31 @@ class SessionState:
         self.audio_samples = np.array([], dtype=np.float32)
         self.last_processed_samples = 0
         self.is_processing = False
-        self.transcript_history: List[str] = []
+        self.full_transcript = ""
         self.prediction_count = DEFAULT_PREDICTION_COUNT
 
 
 sessions: Dict[str, SessionState] = {}
 
 
-def generate_predictions(context: str, transcript_history: List[str], count: int) -> List[str]:
-    text = " ".join(transcript_history).strip().lower()
+def append_delta(existing_text: str, new_text: str) -> str:
+    existing_words = existing_text.split()
+    new_words = new_text.split()
+    if not new_words:
+        return ""
+
+    max_overlap = min(len(existing_words), len(new_words))
+    overlap = 0
+    for size in range(max_overlap, 0, -1):
+        if existing_words[-size:] == new_words[:size]:
+            overlap = size
+            break
+
+    return " ".join(new_words[overlap:]).strip()
+
+
+def generate_predictions(context: str, transcript_text: str, count: int) -> List[str]:
+    text = transcript_text.strip().lower()
     words = [w.strip(".,!?;:()[]{}\"'") for w in text.split() if w.strip(".,!?;:()[]{}\"'")]
     if not words:
         context_words = [w.strip(".,!?;:()[]{}\"'").lower() for w in context.split() if len(w) > 3]
@@ -97,6 +113,7 @@ async def start_session(sid, payload: Dict[str, str]):
         return
 
     state.context = (payload or {}).get("context", "").strip()
+    state.full_transcript = ""
     prediction_count = (payload or {}).get("predictionCount", DEFAULT_PREDICTION_COUNT)
     try:
         state.prediction_count = max(1, min(int(prediction_count), 10))
@@ -136,14 +153,24 @@ async def audio_pcm(sid, data: bytes):
         ).get("text", "").strip()
 
         if transcription:
-            state.transcript_history.append(transcription)
-            if len(state.transcript_history) > MAX_TRANSCRIPT_HISTORY:
-                state.transcript_history = state.transcript_history[-MAX_TRANSCRIPT_HISTORY:]
+            delta = append_delta(state.full_transcript, transcription)
+            if delta:
+                state.full_transcript = f"{state.full_transcript} {delta}".strip()
 
-            await sio.emit("transcription", {"text": transcription}, room=sid)
+            current_word = state.full_transcript.split()[-1] if state.full_transcript else ""
+            await sio.emit(
+                "transcription",
+                {
+                    "text": current_word,
+                    "current_word": current_word,
+                    "delta_text": delta,
+                    "full_text": state.full_transcript,
+                },
+                room=sid,
+            )
             predictions = generate_predictions(
                 context=state.context,
-                transcript_history=state.transcript_history,
+                transcript_text=state.full_transcript,
                 count=state.prediction_count,
             )
             await sio.emit("predictions", {"items": predictions}, room=sid)

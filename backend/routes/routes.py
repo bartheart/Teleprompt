@@ -1,118 +1,157 @@
-from fastapi import APIRouter
+import os
+from typing import Dict, List
+
+import numpy as np
 import socketio
-from typing import Any
 import whisper
-from io import BytesIO
-import numpy as np 
-from pydub import AudioSegment
+from fastapi import APIRouter
 
-
-# initialize the app router 
 router = APIRouter()
 
-# create the socket instance with ASGI support 
 sio = socketio.AsyncServer(
-    async_mode='asgi',
-    cors_allowed_origins='*',
-    logger=True,
-    engineio_logger=True
+    async_mode="asgi",
+    cors_allowed_origins="*",
+    logger=False,
+    engineio_logger=False,
 )
 
-# initialize the turbo model 
-model = whisper.load_model("turbo")
+WHISPER_MODEL_NAME = os.getenv("TELEPROMPT_WHISPER_MODEL", "base.en")
+model = whisper.load_model(WHISPER_MODEL_NAME)
 if model:
-    print("Whisper model is loaded")
+    print(f"Whisper model is loaded: {WHISPER_MODEL_NAME}")
 
-# create ASGI app 
-socket_app = socketio.ASGIApp(
-    socketio_server=sio,
-    other_asgi_app=router
-)
-
-
-# define the home route 
-@router.get('/')
-async def Home():
-    return "Home route"
+SAMPLE_RATE = 16000
+PROCESS_EVERY_SAMPLES = SAMPLE_RATE
+TAIL_WINDOW_SAMPLES = SAMPLE_RATE * 6
+MAX_TRANSCRIPT_HISTORY = 8
+DEFAULT_PREDICTION_COUNT = 5
 
 
-# socket io event handlers 
+class SessionState:
+    def __init__(self) -> None:
+        self.context = ""
+        self.audio_samples = np.array([], dtype=np.float32)
+        self.last_processed_samples = 0
+        self.is_processing = False
+        self.transcript_history: List[str] = []
+        self.prediction_count = DEFAULT_PREDICTION_COUNT
+
+
+sessions: Dict[str, SessionState] = {}
+
+
+def generate_predictions(context: str, transcript_history: List[str], count: int) -> List[str]:
+    text = " ".join(transcript_history).strip().lower()
+    words = [w.strip(".,!?;:()[]{}\"'") for w in text.split() if w.strip(".,!?;:()[]{}\"'")]
+    if not words:
+        context_words = [w.strip(".,!?;:()[]{}\"'").lower() for w in context.split() if len(w) > 3]
+        return context_words[:count] or ["the", "and", "to", "of", "in"][:count]
+
+    last_word = words[-1]
+    followups: Dict[str, Dict[str, int]] = {}
+    for i in range(len(words) - 1):
+        current_word = words[i]
+        next_word = words[i + 1]
+        followups.setdefault(current_word, {})
+        followups[current_word][next_word] = followups[current_word].get(next_word, 0) + 1
+
+    ranked = sorted(followups.get(last_word, {}).items(), key=lambda x: x[1], reverse=True)
+    dynamic = [word for word, _ in ranked]
+
+    context_words = [w.strip(".,!?;:()[]{}\"'").lower() for w in context.split() if len(w) > 3]
+    candidates: List[str] = []
+    candidates.extend(dynamic)
+    candidates.extend(words[-4:])
+    candidates.extend(context_words[:8])
+    candidates.extend(["and", "so", "because", "then", "the"])
+
+    result: List[str] = []
+    for item in candidates:
+        if item and item not in result:
+            result.append(item)
+        if len(result) >= count:
+            break
+    return result
+
+
+@router.get("/")
+async def home() -> str:
+    return "Teleprompt backend is running"
+
+
 @sio.event
 async def connect(sid, environ):
-    print(f"Client connected: {sid}")
-    await sio.emit('connect_response', {'status': 'connected'}, room=sid)
+    sessions[sid] = SessionState()
+    await sio.emit("connect_response", {"status": "connected"}, room=sid)
+
 
 @sio.event
 async def disconnect(sid):
-    print(f"Client disconnected: {sid}")
+    sessions.pop(sid, None)
 
 
-
-# define a mime type var for the audio blobs 
-mime_extension = ''
-
-# to get the mime/ audio format from the browser
-@sio.event 
-async def mime_type(sid, type: str):
-    global mime_extension
-
-    # define a mime to type dictionary 
-    mime_to_extension = {
-        'audio/webm': 'webm',
-        'audio/webm;codecs=opus': 'webm',
-        'audio/mp4': 'mp4',
-        'audio/mp4;codecs=opus': 'mp4',
-        'audio/ogg': 'ogg',
-        'audio/ogg;codecs=opus': 'ogg',
-    }
-
-    # initialize a default extension type 
-    extension_type = mime_to_extension.get(type, 'bin')
-
-    #print(f"Server recieved the mime type of {extension_type}")
-    mime_extension = extension_type
-
-
-# define a audio buffer for the blob data 
-audio_buffer = BytesIO()
-
-# define the sample rate
-SAMPLE_RATE = 16000
-    
-is_processing = False
-
-# handle the event of sending audio packets 
 @sio.event
-async def audio_data(sid, data: bytes):
-    global is_processing, audio_buffer
-    #print(f"Recieved an audio from client: {len(data)} bytes")
+async def start_session(sid, payload: Dict[str, str]):
+    state = sessions.get(sid)
+    if not state:
+        return
 
-    if is_processing:
-        #print("Process in progress")
-        return 
+    state.context = (payload or {}).get("context", "").strip()
+    prediction_count = (payload or {}).get("predictionCount", DEFAULT_PREDICTION_COUNT)
+    try:
+        state.prediction_count = max(1, min(int(prediction_count), 10))
+    except (TypeError, ValueError):
+        state.prediction_count = DEFAULT_PREDICTION_COUNT
 
-    # append the audio blobs into the buffer 
-    audio_buffer.write(data) 
 
-    # check if the buffer is full 
-    if audio_buffer.tell() >= SAMPLE_RATE:
-        is_processing = True 
+@sio.event
+async def audio_pcm(sid, data: bytes):
+    state = sessions.get(sid)
+    if not state or state.is_processing:
+        return
 
-        # convert to numpy array 
-        audio_buffer.seek(0)
-        audio_segment = AudioSegment.from_file(
-            audio_buffer,
-            codec="opus",  
-            format=mime_extension, 
-            parameters=["-ar", str(SAMPLE_RATE)]
+    pcm = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+    if pcm.size == 0:
+        return
+
+    state.audio_samples = np.concatenate((state.audio_samples, pcm))
+    current_samples = len(state.audio_samples)
+    if current_samples - state.last_processed_samples < PROCESS_EVERY_SAMPLES:
+        return
+
+    state.is_processing = True
+    try:
+        state.last_processed_samples = current_samples
+        samples_for_asr = (
+            state.audio_samples[-TAIL_WINDOW_SAMPLES:]
+            if current_samples > TAIL_WINDOW_SAMPLES
+            else state.audio_samples
         )
+        transcription = model.transcribe(
+            samples_for_asr,
+            fp16=False,
+            language="en",
+            temperature=0.0,
+            condition_on_previous_text=False,
+        ).get("text", "").strip()
 
-        # get numpy array 
-        samples = np.array(audio_segment.get_array_of_samples(), dtype=np.float32) / 32768.0
+        if transcription:
+            state.transcript_history.append(transcription)
+            if len(state.transcript_history) > MAX_TRANSCRIPT_HISTORY:
+                state.transcript_history = state.transcript_history[-MAX_TRANSCRIPT_HISTORY:]
 
-        # transcribe from the nunmpy array
-        transcription = model.transcribe(samples).get("text", "")
-        print(transcription)
+            await sio.emit("transcription", {"text": transcription}, room=sid)
+            predictions = generate_predictions(
+                context=state.context,
+                transcript_history=state.transcript_history,
+                count=state.prediction_count,
+            )
+            await sio.emit("predictions", {"items": predictions}, room=sid)
 
-        # reset the buffer 
-        audio_buffer = BytesIO()
+    except Exception as exc:  # pragma: no cover - runtime safety for live pipeline
+        await sio.emit("server_error", {"message": str(exc)}, room=sid)
+    finally:
+        if len(state.audio_samples) > SAMPLE_RATE * 20:
+            state.audio_samples = state.audio_samples[-SAMPLE_RATE * 20 :]
+            state.last_processed_samples = len(state.audio_samples)
+        state.is_processing = False

@@ -1,215 +1,190 @@
 "use client";
-import React, {useEffect, useState, useRef} from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import { Socket, io } from "socket.io-client";
 
-export default function Recorder () {
-    const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+type RecorderProps = {
+  context: string;
+  predictionCount: number;
+  onTranscript: (text: string) => void;
+  onPredictions: (items: string[]) => void;
+  active: boolean;
+};
+
+export default function Recorder({
+  context,
+  predictionCount,
+  onTranscript,
+  onPredictions,
+  active,
+}: RecorderProps) {
     const [error, setError] = useState<string | null>(null);
-    const audioRef = useRef<MediaRecorder | null>(null);
-    // define a state to handle the is recording button states
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+    const startInFlightRef = useRef(false);
+    const wasActiveRef = useRef(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
-    // define a reference for the socket 
     const socket = useRef<Socket | null >(null);
-    // define a state for socket is connected
     const [isConnected, setIsConnected] = useState<boolean>(false);
 
-    // define a function to find the compatible mime type by the browser
-    const getCompatibleMime = () => {
-        const types = [
-            'audio/webm',
-            'audio/webm;codecs=opus',
-            'audio/mp4',
-            'audio/mp4;codecs=opus',
-            'audio/ogg',
-            'audio/ogg;codecs=opus'
-        ];
-
-        // iterate over the mime types 
-        for (const type of types) {
-            // check if the type is compatible 
-            if (MediaRecorder.isTypeSupported(type)) {
-                return type;
-            }
-        }
-
-        return null;
-    };
-
-    // define a function to initialize a socket 
-    const initializeSocket = () => {
-        // dont create a socket if it exists
+    const initializeSocket = useCallback(() => {
         if (socket.current) return;
 
-        // creating a socket instance 
         const newSocket = io("http://127.0.0.1:8000", {
             transports: ['websocket'],
-            autoConnect: true,
-            reconnection: true,
-            reconnectionAttempts: 5,
-            reconnectionDelay: 1000,
+            autoConnect: false,
+            reconnection: false,
         });
 
-        // Add error handling
         newSocket.on('connect_error', (error) => {
             console.error('Socket connection error:', error);
+            setError(`Socket error: ${error.message}`);
         });
 
-
-        // connect with the server 
         newSocket.on('connect', () => {
-            console.log("Connected to websocket server");
             setIsConnected(true);
         })
 
         newSocket.on('disconnect', () => {
-            console.log("Disconnected from websocket server");
             setIsConnected(false);
         });
 
-        // get the reponse of the sent audio file 
-        newSocket.on('audio_recieved', (response) => {
-            console.log("Server Response: ", response);
+        newSocket.on("transcription", (response: { text?: string }) => {
+            if (response?.text) {
+                onTranscript(response.text);
+            }
+        });
+
+        newSocket.on("predictions", (response: { items?: string[] }) => {
+            onPredictions(response?.items ?? []);
+        });
+
+        newSocket.on("server_error", (response: { message?: string }) => {
+            setError(response?.message ?? "Unknown server error");
         });
        
-        // save scoket reference 
         socket.current = newSocket
-    }
+    }, [onPredictions, onTranscript]);
 
 
 
-    // define a function that handles recording the audio 
-    const startRecording = (stream: MediaStream) => {
-        // check if usermedia is not available 
-        if (!stream) return;
+    const stopRecording = useCallback(() => {
+        startInFlightRef.current = false;
 
+        if (processorRef.current) {
+            processorRef.current.disconnect();
+            processorRef.current.onaudioprocess = null;
+        }
+        processorRef.current = null;
+
+        if (sourceNodeRef.current) {
+            sourceNodeRef.current.disconnect();
+        }
+        sourceNodeRef.current = null;
+
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+        }
+        streamRef.current = null;
+
+        if (audioContextRef.current) {
+            void audioContextRef.current.close();
+        }
+        audioContextRef.current = null;
+
+        if (socket.current?.connected) {
+            socket.current.disconnect();
+        }
+        setIsRecording(false);
+    }, []);
+
+    const startRecording = useCallback(async () => {
+        if (startInFlightRef.current || isRecording || processorRef.current) {
+            return;
+        }
+
+        startInFlightRef.current = true;
+        setError(null);
         try {
-            const mimeType = getCompatibleMime();
+            const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+            streamRef.current = stream;
 
-            // check if there is any comaptibe mime for the browser 
-            if (!mimeType){
-                throw new Error("No supported audio MIME type found");
-            }
-
-            // initialize a socket and connect 
             initializeSocket();
             if (socket.current) {
-                // connect the socket 
                 socket.current.connect();
-                // send the mime type to the backend 
-                socket.current.emit('mime_type', mimeType);
-            };
+                socket.current.emit("start_session", {
+                    context,
+                    predictionCount,
+                });
+            }
 
-            const options = { 
-                mimeType: mimeType,
-                audioBitsPerSecond: 16000,  
-                channelCount: 1 
-            };
+            const audioContext = new AudioContext({ sampleRate: 16000 });
+            audioContextRef.current = audioContext;
+            const source = audioContext.createMediaStreamSource(stream);
+            sourceNodeRef.current = source;
 
-            // initialize a Mediarecorder instance with the audiostream 
-            const recordedMedia = new MediaRecorder(stream, options);
-            // update the audio url to the current 
-            audioRef.current = recordedMedia;
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+            processorRef.current = processor;
 
-            // push the recorded media when availabe 
-            recordedMedia.ondataavailable = (event) => {
-                const audioChunk = event.data;
-                if (socket.current?.connected && audioChunk.size > 0){
-                    socket.current.emit('audio_data', audioChunk)
+            processor.onaudioprocess = (event) => {
+                const input = event.inputBuffer.getChannelData(0);
+                const int16 = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i += 1) {
+                    const s = Math.max(-1, Math.min(1, input[i]));
+                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                }
+                if (socket.current?.connected) {
+                    socket.current.emit("audio_pcm", int16.buffer);
                 }
             };
 
-            // send the audio file every 100ms 
-            recordedMedia.start(100);
-
-            // update the isRecording state 
+            source.connect(processor);
+            processor.connect(audioContext.destination);
             setIsRecording(true);
-
-            console.log("Recording started with mime type: ", {mimeType})
-
         } catch (err) {
-            setError("Error starting recording: " + (err as Error).message);
-            console.error("Error starting recording:", err);
+            const message = (err as Error).message || "Failed to start microphone.";
+            setError(message);
+            stopRecording();
+        } finally {
+            startInFlightRef.current = false;
         }
-    }
+    }, [context, predictionCount, initializeSocket, isRecording, stopRecording]);
 
-
-    //define a function to cleanup resources
-    const cleanUp = () => {
-        // stop the media recorder instance 
-        if (audioRef.current?.state === 'recording') {
-            // stop recording 
-            audioRef.current.stop();
-        };
-        audioRef.current = null;
-
-        // stop all audio tracks
-        if (audioStream) {
-            audioStream.getTracks().forEach((track) => track.stop());
-            setAudioStream(null);
-            console.log("Audio stream cleanedup.")
-        };
-
-        // disconnect the socket 
-        if (socket.current?.connected) {
-            socket.current.disconnect();
-            console.log('Socket disconnected');
+    useEffect(() => {
+        if (active && !wasActiveRef.current) {
+            void startRecording();
         }
+        if (!active && wasActiveRef.current) {
+            stopRecording();
+        }
+        wasActiveRef.current = active;
+    }, [active, startRecording, stopRecording]);
 
-        // set is recording to false
-        setIsRecording(false);
-
-    };
-
-    // define a function to request the mic permission 
-    const handleButton = async () => {
-        if (isRecording) {
-            // stop recording 
-            cleanUp();
-        } else {
-            try {
-                // capture the audio stream from the mediadvice api
-                const stream: MediaStream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true
-                    }
-                });
-                // set the audiostream state 
-                setAudioStream(stream);
-                // start recording 
-                await startRecording(stream);
-    
-            } catch (err) {
-                const errorMessage = (err as Error).message || "An unknown eror";
-                // set the error state
-                setError(errorMessage);
-                // output the error message 
-                console.log("Erorr acessing the mic: ", err)
-            };
-            
-        } 
-    };
-
-    
-    // clean up the stream when the componenet unmounts 
-    useEffect (() => {
-        
+    useEffect(() => {
         return () => {
-            cleanUp();
+            stopRecording();
             socket.current = null;
         };
-    }, []);
+    }, [stopRecording]);
 
     return (
         <div>
-            <div>
-                <p>Socket status: {isConnected ? 'Connected' : 'Disconnected'}</p>
+            <div className="status-row">
+                <p className={`pill ${isConnected ? "ok" : "warn"}`}>
+                    Socket: {isConnected ? "Connected" : "Disconnected"}
+                </p>
+                <p className={`pill ${isRecording ? "ok" : ""}`}>
+                    Recorder: {isRecording ? "Recording" : "Idle"}
+                </p>
             </div>
-            <button onClick={handleButton}>
-                {isRecording ? "Stop": "Start"}
-            </button>
-
+            {error && <p className="error">{error}</p>}
         </div>
     );
 };

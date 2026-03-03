@@ -3,19 +3,239 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --bg: #f5f4ef;
+  --panel: #fbfaf6;
+  --ink: #1f2430;
+  --muted: #6f7683;
+  --line: #dedad0;
+  --accent: #1750d3;
+  --accent-ink: #ffffff;
+  --ok: #1f8b4c;
+  --warn: #b93d2d;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 10%, #ffffff 0%, rgba(255, 255, 255, 0.2) 35%, transparent 65%),
+    linear-gradient(180deg, #f8f7f2 0%, var(--bg) 100%);
+  font-family: var(--font-geist-sans), "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.page-shell {
+  min-height: 100vh;
+  padding: 48px 20px;
+}
+
+.page-card {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(20, 30, 50, 0.08);
+  overflow: hidden;
+}
+
+.topbar {
+  padding: 26px 28px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.subtitle {
+  margin: 6px 0 0;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.body-grid {
+  display: grid;
+  gap: 18px;
+  padding: 22px 22px 24px;
+}
+
+.control-panel,
+.content-panel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdfa;
+  padding: 16px;
+}
+
+.label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.86rem;
+  font-weight: 620;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.input {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  border: 1px solid #c9c3b6;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(23, 80, 211, 0.14);
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font: inherit;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn-secondary {
+  background: #eef1f7;
+  color: #22304d;
+  border-color: #d6deef;
+}
+
+.btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.status-row {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: #fff;
+}
+
+.pill.ok {
+  color: var(--ok);
+  border-color: rgba(31, 139, 76, 0.35);
+  background: rgba(31, 139, 76, 0.08);
+}
+
+.pill.warn {
+  color: var(--warn);
+  border-color: rgba(185, 61, 45, 0.35);
+  background: rgba(185, 61, 45, 0.08);
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 14px;
+}
+
+.panel-title {
+  margin: 0 0 12px;
+  font-size: 0.96rem;
+  font-weight: 620;
+}
+
+.log-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  min-height: 190px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 10px 12px;
+}
+
+.line {
+  margin: 0;
+  padding: 7px 0;
+  border-bottom: 1px dashed #e8e3d9;
+  line-height: 1.45;
+}
+
+.line:last-child {
+  border-bottom: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.suggestions li {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px 10px;
+  font-size: 0.92rem;
+}
+
+.error {
+  margin-top: 10px;
+  color: var(--warn);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 840px) {
+  .page-shell {
+    padding: 20px 14px;
+  }
+
+  .page-card {
+    border-radius: 14px;
+  }
+
+  .topbar {
+    padding: 18px 18px;
+  }
+
+  .body-grid {
+    padding: 14px;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -50,9 +50,10 @@ export default function Recorder({
             setIsConnected(false);
         });
 
-        newSocket.on("transcription", (response: { text?: string }) => {
-            if (response?.text) {
-                onTranscript(response.text);
+        newSocket.on("transcription", (response: { text?: string; current_word?: string }) => {
+            const currentWord = response?.current_word ?? response?.text ?? "";
+            if (currentWord) {
+                onTranscript(currentWord);
             }
         });
 

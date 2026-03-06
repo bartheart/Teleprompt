@@ -1,5 +1,7 @@
 # Teleprompt
 
+Small maintenance update.
+
 This repo is configured for free hosting + auto deploy:
 - `frontend` -> Vercel (Hobby/free)
 - `backend` -> Render (Free Web Service)

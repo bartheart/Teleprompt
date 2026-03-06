@@ -1,7 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { useCallback } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import Recorder from "../components/recorder";
 import Prompter from "./prompter";
 
@@ -23,26 +22,29 @@ export default function Home() {
   };
 
   const predictionCount = useMemo(() => 5, []);
+
   const handleTranscript = useCallback((text: string) => {
     setTranscripts(text ? [text] : []);
   }, []);
+
   const handlePredictions = useCallback((items: string[]) => {
     setPredictions(items);
   }, []);
 
   return (
-    <div className="page-shell">
-      <main className="page-card">
-        <header className="topbar">
-          <div>
-            <h1 className="title">Teleprompt MVP</h1>
-            <p className="subtitle">Minimal live transcription with next-phrase hints</p>
-          </div>
+    <div className="app-shell">
+      <div className="ambient" aria-hidden="true" />
+      <main className="app">
+        <header className="header">
+          <p className="eyebrow">Realtime Speech Assistant</p>
+          <h1>Teleprompt</h1>
+          <p className="subhead">Live transcript and phrase prompts for natural delivery.</p>
         </header>
 
-        <div className="body-grid">
-          <section className="control-panel">
-            <form onSubmit={startTeleprompter}>
+        <div className="layout-grid">
+          <section className="panel controls" aria-label="Control panel">
+            <h2 className="section-title">Session Setup</h2>
+            <form onSubmit={startTeleprompter} className="form-stack">
               <label className="label" htmlFor="context-input">
                 Context
               </label>
@@ -52,11 +54,11 @@ export default function Home() {
                 type="text"
                 value={context}
                 onChange={(event) => setContext(event.target.value)}
-                placeholder="Talk topic, audience, and desired tone"
+                placeholder="Audience, topic, and tone"
               />
               <div className="actions">
                 <button className="btn btn-primary" type="submit" disabled={isActive}>
-                  Start
+                  Start Session
                 </button>
                 <button
                   className="btn btn-secondary"
@@ -78,7 +80,7 @@ export default function Home() {
             />
           </section>
 
-          <section className="content-panel">
+          <section className="panel" aria-label="Transcript and predictions">
             <Prompter transcripts={transcripts} predictions={predictions} />
           </section>
         </div>

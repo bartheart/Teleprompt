@@ -50,12 +50,19 @@ export default function Recorder({
             setIsConnected(false);
         });
 
-        newSocket.on("transcription", (response: { text?: string; current_word?: string }) => {
-            const currentWord = response?.current_word ?? response?.text ?? "";
-            if (currentWord) {
-                onTranscript(currentWord);
-            }
-        });
+        newSocket.on(
+            "transcription",
+            (response: { text?: string; current_word?: string; full_text?: string }) => {
+                const fullText = response?.full_text?.trim() ?? "";
+                const trailingWords = fullText
+                    ? fullText.split(/\s+/).slice(-3).join(" ")
+                    : (response?.current_word ?? response?.text ?? "").trim();
+
+                if (trailingWords) {
+                    onTranscript(trailingWords);
+                }
+            },
+        );
 
         newSocket.on("predictions", (response: { items?: string[] }) => {
             onPredictions(response?.items ?? []);

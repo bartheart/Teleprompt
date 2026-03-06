@@ -20,7 +20,7 @@ export default function Prompter({ transcripts, predictions }: PrompterProps) {
       </section>
 
       <section>
-        <h2 className="section-title">Suggested Phrases</h2>
+        <h2 className="section-title">Suggestions</h2>
         {predictions.length === 0 ? (
           <p className="muted">No suggestions yet.</p>
         ) : (

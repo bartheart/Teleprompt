@@ -38,7 +38,7 @@ export default function Home() {
         <header className="header">
           <p className="eyebrow">Realtime Speech Assistant</p>
           <h1>Teleprompt</h1>
-          <p className="subhead">Live transcript and phrase prompts for natural delivery.</p>
+          <p className="subhead">Live transcript and speaking cues for natural delivery.</p>
         </header>
 
         <div className="layout-grid">

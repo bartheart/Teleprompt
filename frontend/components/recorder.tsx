@@ -17,6 +17,7 @@ export default function Recorder({
   onPredictions,
   active,
 }: RecorderProps) {
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8000";
     const [error, setError] = useState<string | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -31,7 +32,7 @@ export default function Recorder({
     const initializeSocket = useCallback(() => {
         if (socket.current) return;
 
-        const newSocket = io("http://127.0.0.1:8000", {
+        const newSocket = io(backendUrl, {
             transports: ['websocket'],
             autoConnect: false,
             reconnection: false,
@@ -73,7 +74,7 @@ export default function Recorder({
         });
        
         socket.current = newSocket
-    }, [onPredictions, onTranscript]);
+    }, [backendUrl, onPredictions, onTranscript]);
 
 
 

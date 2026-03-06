@@ -4,31 +4,31 @@ type PrompterProps = {
 };
 
 export default function Prompter({ transcripts, predictions }: PrompterProps) {
+  const transcript = transcripts[transcripts.length - 1] ?? "";
+
   return (
-    <div className="content-grid">
+    <div className="prompter-stack">
       <section>
-        <h2 className="panel-title">Live Transcript</h2>
-        <div className="log-box">
-          {transcripts.length === 0 ? (
-            <p className="muted">No transcript yet. Start and speak to stream text.</p>
+        <h2 className="section-title">Live Transcript</h2>
+        <div className="transcript-stage">
+          {transcript ? (
+            <p className="transcript-line">{transcript}</p>
           ) : (
-            transcripts.slice(-8).map((line, index) => (
-              <p className="line" key={`${line}-${index}`}>
-                {line}
-              </p>
-            ))
+            <p className="muted">No transcript yet. Start and speak to begin.</p>
           )}
         </div>
       </section>
 
       <section>
-        <h2 className="panel-title">Suggested Phrases</h2>
+        <h2 className="section-title">Suggested Phrases</h2>
         {predictions.length === 0 ? (
           <p className="muted">No suggestions yet.</p>
         ) : (
-          <ul className="suggestions">
+          <ul className="suggestion-list">
             {predictions.map((item, index) => (
-              <li key={`${item}-${index}`}>{item}</li>
+              <li className="suggestion-pill" key={`${item}-${index}`}>
+                {item}
+              </li>
             ))}
           </ul>
         )}

@@ -38,12 +38,12 @@ export default function Home() {
         <header className="header">
           <p className="eyebrow">Realtime Speech Assistant</p>
           <h1>Teleprompt</h1>
-          <p className="subhead">Live transcript and phrase prompts for natural delivery.</p>
+          <p className="subhead">Live transcript and speaking cues for natural delivery.</p>
         </header>
 
         <div className="layout-grid">
           <section className="panel controls" aria-label="Control panel">
-            <h2 className="section-title">Session Setup</h2>
+            <h2 className="section-title">Controls</h2>
             <form onSubmit={startTeleprompter} className="form-stack">
               <label className="label" htmlFor="context-input">
                 Context
@@ -58,7 +58,7 @@ export default function Home() {
               />
               <div className="actions">
                 <button className="btn btn-primary" type="submit" disabled={isActive}>
-                  Start Session
+                  Start
                 </button>
                 <button
                   className="btn btn-secondary"

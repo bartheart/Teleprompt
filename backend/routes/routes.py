@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Dict, List
 
@@ -15,10 +16,9 @@ sio = socketio.AsyncServer(
     engineio_logger=False,
 )
 
-WHISPER_MODEL_NAME = os.getenv("TELEPROMPT_WHISPER_MODEL", "base.en")
-model = whisper.load_model(WHISPER_MODEL_NAME)
-if model:
-    print(f"Whisper model is loaded: {WHISPER_MODEL_NAME}")
+WHISPER_MODEL_NAME = os.getenv("TELEPROMPT_WHISPER_MODEL", "tiny.en")
+model = None
+model_load_lock = asyncio.Lock()
 
 SAMPLE_RATE = 16000
 PROCESS_EVERY_SAMPLES = SAMPLE_RATE
@@ -38,6 +38,19 @@ class SessionState:
 
 
 sessions: Dict[str, SessionState] = {}
+
+
+async def get_model():
+    global model
+    if model is not None:
+        return model
+
+    async with model_load_lock:
+        if model is not None:
+            return model
+        model = await asyncio.to_thread(whisper.load_model, WHISPER_MODEL_NAME)
+        print(f"Whisper model is loaded: {WHISPER_MODEL_NAME}")
+        return model
 
 
 def append_delta(existing_text: str, new_text: str) -> str:
@@ -138,13 +151,14 @@ async def audio_pcm(sid, data: bytes):
 
     state.is_processing = True
     try:
+        loaded_model = await get_model()
         state.last_processed_samples = current_samples
         samples_for_asr = (
             state.audio_samples[-TAIL_WINDOW_SAMPLES:]
             if current_samples > TAIL_WINDOW_SAMPLES
             else state.audio_samples
         )
-        transcription = model.transcribe(
+        transcription = loaded_model.transcribe(
             samples_for_asr,
             fp16=False,
             language="en",

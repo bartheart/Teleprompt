@@ -40,6 +40,7 @@ class SessionState:
         self.prediction_count = DEFAULT_PREDICTION_COUNT
         self.last_audio_received_ms: Optional[int] = None
         self.last_client_sent_at_ms: Optional[int] = None
+        self.last_batch_id: Optional[int] = None
 
 
 sessions: Dict[str, SessionState] = {}
@@ -148,9 +149,11 @@ async def audio_pcm(sid, data: bytes):
     total_start = time.perf_counter()
 
     client_sent_at_ms: Optional[int] = None
+    batch_id: Optional[int] = None
     pcm_payload = data
     if isinstance(data, dict):
         client_sent_at_ms = data.get("client_sent_at_ms")
+        batch_id = data.get("batch_id")
         pcm_payload = data.get("pcm")
     if pcm_payload is None:
         return
@@ -162,6 +165,8 @@ async def audio_pcm(sid, data: bytes):
     state.last_audio_received_ms = receive_ms
     if client_sent_at_ms is not None:
         state.last_client_sent_at_ms = client_sent_at_ms
+    if batch_id is not None:
+        state.last_batch_id = batch_id
 
     state.audio_samples = np.concatenate((state.audio_samples, pcm))
     current_samples = len(state.audio_samples)
@@ -200,6 +205,7 @@ async def audio_pcm(sid, data: bytes):
                     "current_word": current_word,
                     "delta_text": delta,
                     "full_text": state.full_transcript,
+                    "batch_id": state.last_batch_id,
                 },
                 room=sid,
             )

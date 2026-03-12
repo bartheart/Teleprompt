@@ -28,6 +28,9 @@ export default function Recorder({
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const socket = useRef<Socket | null >(null);
     const [isConnected, setIsConnected] = useState<boolean>(false);
+    const lastAudioSendAtRef = useRef<number | null>(null);
+    const audioFrameSeqRef = useRef(0);
+    const LOG_EVERY_N_FRAMES = 20;
 
     const initializeSocket = useCallback(() => {
         if (socket.current) return;
@@ -61,6 +64,18 @@ export default function Recorder({
 
                 if (trailingWords) {
                     onTranscript(trailingWords);
+                    const now = performance.now();
+                    const lastSend = lastAudioSendAtRef.current;
+                    if (lastSend !== null) {
+                        const deltaMs = Math.round(now - lastSend);
+                        console.info(
+                            `[latency] transcription_delta_ms=${deltaMs} trailing="${trailingWords}"`,
+                        );
+                    } else {
+                        console.info(
+                            `[latency] transcription_received trailing="${trailingWords}" (no send timestamp)`,
+                        );
+                    }
                 }
             },
         );
@@ -149,8 +164,19 @@ export default function Recorder({
                     const s = Math.max(-1, Math.min(1, input[i]));
                     int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
                 }
+                const now = performance.now();
+                lastAudioSendAtRef.current = now;
+                audioFrameSeqRef.current += 1;
+                const seq = audioFrameSeqRef.current;
+                if (seq % LOG_EVERY_N_FRAMES === 0) {
+                    console.info(`[latency] audio_pcm_send seq=${seq} samples=${int16.length}`);
+                }
                 if (socket.current?.connected) {
-                    socket.current.emit("audio_pcm", int16.buffer);
+                    socket.current.emit("audio_pcm", {
+                        pcm: int16.buffer,
+                        client_sent_at_ms: Date.now(),
+                        samples: int16.length,
+                    });
                 }
             };
 

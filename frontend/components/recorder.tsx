@@ -28,6 +28,14 @@ export default function Recorder({
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const socket = useRef<Socket | null >(null);
     const [isConnected, setIsConnected] = useState<boolean>(false);
+    const lastAudioSendAtRef = useRef<number | null>(null);
+    const audioFrameSeqRef = useRef(0);
+    const LOG_EVERY_N_FRAMES = 20;
+    const SAMPLE_RATE = 16000;
+    const batchIdRef = useRef(1);
+    const batchSamplesRef = useRef(0);
+    const batchStartAtMsRef = useRef<number | null>(null);
+    const batchStartByIdRef = useRef<Map<number, number>>(new Map());
 
     const initializeSocket = useCallback(() => {
         if (socket.current) return;
@@ -61,6 +69,34 @@ export default function Recorder({
 
                 if (trailingWords) {
                     onTranscript(trailingWords);
+                    const now = performance.now();
+                    const lastSend = lastAudioSendAtRef.current;
+                    const responseBatchId = (response as { batch_id?: number }).batch_id;
+                    const nowMs = Date.now();
+                    if (typeof responseBatchId === "number") {
+                        const batchStart = batchStartByIdRef.current.get(responseBatchId);
+                        if (batchStart) {
+                            const endToEndMs = nowMs - batchStart;
+                            console.info(
+                                `[latency] end_to_end_ms=${Math.round(endToEndMs)} batch_id=${responseBatchId}`,
+                            );
+                            batchStartByIdRef.current.delete(responseBatchId);
+                        } else {
+                            console.info(
+                                `[latency] end_to_end_ms=unknown batch_id=${responseBatchId}`,
+                            );
+                        }
+                    }
+                    if (lastSend !== null) {
+                        const deltaMs = Math.round(now - lastSend);
+                        console.info(
+                            `[latency] transcription_delta_ms=${deltaMs} trailing="${trailingWords}"`,
+                        );
+                    } else {
+                        console.info(
+                            `[latency] transcription_received trailing="${trailingWords}" (no send timestamp)`,
+                        );
+                    }
                 }
             },
         );
@@ -149,8 +185,52 @@ export default function Recorder({
                     const s = Math.max(-1, Math.min(1, input[i]));
                     int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
                 }
+                const currentBatchId = batchIdRef.current;
+                if (batchSamplesRef.current === 0) {
+                    const batchStartMs = Date.now();
+                    batchStartAtMsRef.current = batchStartMs;
+                    batchStartByIdRef.current.set(currentBatchId, batchStartMs);
+                }
+                const now = performance.now();
+                lastAudioSendAtRef.current = now;
+                audioFrameSeqRef.current += 1;
+                const seq = audioFrameSeqRef.current;
+                if (seq % LOG_EVERY_N_FRAMES === 0) {
+                    console.info(
+                        `[latency] audio_pcm_send seq=${seq} samples=${int16.length} batch_id=${currentBatchId}`,
+                    );
+                }
+                batchSamplesRef.current += int16.length;
                 if (socket.current?.connected) {
-                    socket.current.emit("audio_pcm", int16.buffer);
+                    socket.current.emit("audio_pcm", {
+                        pcm: int16.buffer,
+                        client_sent_at_ms: Date.now(),
+                        samples: int16.length,
+                        batch_id: currentBatchId,
+                    });
+                }
+                while (batchSamplesRef.current >= SAMPLE_RATE) {
+                    const completedBatchId = batchIdRef.current;
+                    const batchStartMs = batchStartAtMsRef.current;
+                    if (batchStartMs) {
+                        const batchCollectMs = Date.now() - batchStartMs;
+                        console.info(
+                            `[latency] batch_collect_ms=${Math.round(batchCollectMs)} batch_id=${completedBatchId}`,
+                        );
+                    } else {
+                        console.info(
+                            `[latency] batch_collect_ms=unknown batch_id=${completedBatchId}`,
+                        );
+                    }
+                    batchSamplesRef.current -= SAMPLE_RATE;
+                    batchIdRef.current += 1;
+                    if (batchSamplesRef.current > 0) {
+                        const nextBatchStart = Date.now();
+                        batchStartAtMsRef.current = nextBatchStart;
+                        batchStartByIdRef.current.set(batchIdRef.current, nextBatchStart);
+                    } else {
+                        batchStartAtMsRef.current = null;
+                    }
                 }
             };
 

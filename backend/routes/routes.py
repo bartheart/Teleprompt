@@ -1,6 +1,8 @@
 import asyncio
+import logging
 import os
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional
 
 import numpy as np
 import socketio
@@ -8,6 +10,7 @@ import whisper
 from fastapi import APIRouter
 
 router = APIRouter()
+logger = logging.getLogger("teleprompt.latency")
 
 sio = socketio.AsyncServer(
     async_mode="asgi",
@@ -35,6 +38,9 @@ class SessionState:
         self.is_processing = False
         self.full_transcript = ""
         self.prediction_count = DEFAULT_PREDICTION_COUNT
+        self.last_audio_received_ms: Optional[int] = None
+        self.last_client_sent_at_ms: Optional[int] = None
+        self.last_batch_id: Optional[int] = None
 
 
 sessions: Dict[str, SessionState] = {}
@@ -139,10 +145,28 @@ async def audio_pcm(sid, data: bytes):
     state = sessions.get(sid)
     if not state or state.is_processing:
         return
+    receive_ms = int(time.time() * 1000)
+    total_start = time.perf_counter()
 
-    pcm = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+    client_sent_at_ms: Optional[int] = None
+    batch_id: Optional[int] = None
+    pcm_payload = data
+    if isinstance(data, dict):
+        client_sent_at_ms = data.get("client_sent_at_ms")
+        batch_id = data.get("batch_id")
+        pcm_payload = data.get("pcm")
+    if pcm_payload is None:
+        return
+
+    pcm = np.frombuffer(pcm_payload, dtype=np.int16).astype(np.float32) / 32768.0
     if pcm.size == 0:
         return
+
+    state.last_audio_received_ms = receive_ms
+    if client_sent_at_ms is not None:
+        state.last_client_sent_at_ms = client_sent_at_ms
+    if batch_id is not None:
+        state.last_batch_id = batch_id
 
     state.audio_samples = np.concatenate((state.audio_samples, pcm))
     current_samples = len(state.audio_samples)
@@ -158,6 +182,7 @@ async def audio_pcm(sid, data: bytes):
             if current_samples > TAIL_WINDOW_SAMPLES
             else state.audio_samples
         )
+        transcribe_start = time.perf_counter()
         transcription = loaded_model.transcribe(
             samples_for_asr,
             fp16=False,
@@ -165,6 +190,7 @@ async def audio_pcm(sid, data: bytes):
             temperature=0.0,
             condition_on_previous_text=False,
         ).get("text", "").strip()
+        transcribe_ms = (time.perf_counter() - transcribe_start) * 1000.0
 
         if transcription:
             delta = append_delta(state.full_transcript, transcription)
@@ -179,6 +205,7 @@ async def audio_pcm(sid, data: bytes):
                     "current_word": current_word,
                     "delta_text": delta,
                     "full_text": state.full_transcript,
+                    "batch_id": state.last_batch_id,
                 },
                 room=sid,
             )
@@ -188,6 +215,21 @@ async def audio_pcm(sid, data: bytes):
                 count=state.prediction_count,
             )
             await sio.emit("predictions", {"items": predictions}, room=sid)
+
+        total_ms = (time.perf_counter() - total_start) * 1000.0
+        buffered_seconds = len(state.audio_samples) / SAMPLE_RATE
+        client_to_server_ms = None
+        if state.last_client_sent_at_ms is not None:
+            client_to_server_ms = receive_ms - state.last_client_sent_at_ms
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "audio_pcm_processed sid=%s transcribe_ms=%.1f total_ms=%.1f buffered_s=%.2f client_to_server_ms=%s",
+                sid,
+                transcribe_ms,
+                total_ms,
+                buffered_seconds,
+                f"{client_to_server_ms:.1f}" if client_to_server_ms is not None else "n/a",
+            )
 
     except Exception as exc:  # pragma: no cover - runtime safety for live pipeline
         await sio.emit("server_error", {"message": str(exc)}, room=sid)

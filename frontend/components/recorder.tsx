@@ -32,7 +32,6 @@ export default function Recorder({
     const lastAudioSendAtRef = useRef<number | null>(null);
     const audioFrameSeqRef = useRef(0);
     const LOG_EVERY_N_FRAMES = 20;
-    const SAMPLE_RATE = 16000;
     const PROCESS_EVERY_SAMPLES = 8000;
     const PCM_CHUNK_SAMPLES = 1024;
     const floatBufferRef = useRef<Float32Array>(new Float32Array(PCM_CHUNK_SAMPLES));

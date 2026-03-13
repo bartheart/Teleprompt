@@ -20,7 +20,8 @@ export default function Recorder({
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8000";
     const [error, setError] = useState<string | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+    const workletUrlRef = useRef<string | null>(null);
     const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const startInFlightRef = useRef(false);
@@ -31,7 +32,10 @@ export default function Recorder({
     const lastAudioSendAtRef = useRef<number | null>(null);
     const audioFrameSeqRef = useRef(0);
     const LOG_EVERY_N_FRAMES = 20;
-    const SAMPLE_RATE = 16000;
+    const PROCESS_EVERY_SAMPLES = 8000;
+    const PCM_CHUNK_SAMPLES = 1024;
+    const floatBufferRef = useRef<Float32Array>(new Float32Array(PCM_CHUNK_SAMPLES));
+    const floatOffsetRef = useRef(0);
     const batchIdRef = useRef(1);
     const batchSamplesRef = useRef(0);
     const batchStartAtMsRef = useRef<number | null>(null);
@@ -117,11 +121,15 @@ export default function Recorder({
     const stopRecording = useCallback(() => {
         startInFlightRef.current = false;
 
-        if (processorRef.current) {
-            processorRef.current.disconnect();
-            processorRef.current.onaudioprocess = null;
+        if (workletNodeRef.current) {
+            workletNodeRef.current.port.onmessage = null;
+            workletNodeRef.current.disconnect();
         }
-        processorRef.current = null;
+        workletNodeRef.current = null;
+        if (workletUrlRef.current) {
+            URL.revokeObjectURL(workletUrlRef.current);
+        }
+        workletUrlRef.current = null;
 
         if (sourceNodeRef.current) {
             sourceNodeRef.current.disconnect();
@@ -145,12 +153,19 @@ export default function Recorder({
     }, []);
 
     const startRecording = useCallback(async () => {
-        if (startInFlightRef.current || isRecording || processorRef.current) {
+        if (startInFlightRef.current || isRecording || workletNodeRef.current) {
             return;
         }
 
         startInFlightRef.current = true;
         setError(null);
+        lastAudioSendAtRef.current = null;
+        audioFrameSeqRef.current = 0;
+        batchIdRef.current = 1;
+        batchSamplesRef.current = 0;
+        batchStartAtMsRef.current = null;
+        batchStartByIdRef.current.clear();
+        floatOffsetRef.current = 0;
         try {
             const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
@@ -175,16 +190,28 @@ export default function Recorder({
             const source = audioContext.createMediaStreamSource(stream);
             sourceNodeRef.current = source;
 
-            const processor = audioContext.createScriptProcessor(4096, 1, 1);
-            processorRef.current = processor;
-
-            processor.onaudioprocess = (event) => {
-                const input = event.inputBuffer.getChannelData(0);
-                const int16 = new Int16Array(input.length);
-                for (let i = 0; i < input.length; i += 1) {
-                    const s = Math.max(-1, Math.min(1, input[i]));
-                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            const workletSource = `
+                class PcmCaptureProcessor extends AudioWorkletProcessor {
+                    process(inputs) {
+                        const input = inputs[0];
+                        if (input && input[0]) {
+                            const channel = input[0];
+                            this.port.postMessage(channel.slice(0));
+                        }
+                        return true;
+                    }
                 }
+                registerProcessor("pcm-capture", PcmCaptureProcessor);
+            `;
+            const workletBlob = new Blob([workletSource], { type: "application/javascript" });
+            const workletUrl = URL.createObjectURL(workletBlob);
+            workletUrlRef.current = workletUrl;
+            await audioContext.audioWorklet.addModule(workletUrl);
+
+            const workletNode = new AudioWorkletNode(audioContext, "pcm-capture");
+            workletNodeRef.current = workletNode;
+
+            const handlePcmChunk = (int16: Int16Array) => {
                 const currentBatchId = batchIdRef.current;
                 if (batchSamplesRef.current === 0) {
                     const batchStartMs = Date.now();
@@ -209,7 +236,7 @@ export default function Recorder({
                         batch_id: currentBatchId,
                     });
                 }
-                while (batchSamplesRef.current >= SAMPLE_RATE) {
+                while (batchSamplesRef.current >= PROCESS_EVERY_SAMPLES) {
                     const completedBatchId = batchIdRef.current;
                     const batchStartMs = batchStartAtMsRef.current;
                     if (batchStartMs) {
@@ -222,7 +249,7 @@ export default function Recorder({
                             `[latency] batch_collect_ms=unknown batch_id=${completedBatchId}`,
                         );
                     }
-                    batchSamplesRef.current -= SAMPLE_RATE;
+                    batchSamplesRef.current -= PROCESS_EVERY_SAMPLES;
                     batchIdRef.current += 1;
                     if (batchSamplesRef.current > 0) {
                         const nextBatchStart = Date.now();
@@ -234,8 +261,32 @@ export default function Recorder({
                 }
             };
 
-            source.connect(processor);
-            processor.connect(audioContext.destination);
+            workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+                const input = event.data;
+                if (!input || input.length === 0) {
+                    return;
+                }
+                let offset = floatOffsetRef.current;
+                let buffer = floatBufferRef.current;
+                for (let i = 0; i < input.length; i += 1) {
+                    buffer[offset] = input[i];
+                    offset += 1;
+                    if (offset === PCM_CHUNK_SAMPLES) {
+                        const int16 = new Int16Array(PCM_CHUNK_SAMPLES);
+                        for (let j = 0; j < PCM_CHUNK_SAMPLES; j += 1) {
+                            const s = Math.max(-1, Math.min(1, buffer[j]));
+                            int16[j] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                        }
+                        handlePcmChunk(int16);
+                        offset = 0;
+                        buffer = floatBufferRef.current;
+                    }
+                }
+                floatOffsetRef.current = offset;
+            };
+
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination);
             setIsRecording(true);
         } catch (err) {
             const message = (err as Error).message || "Failed to start microphone.";

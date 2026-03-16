@@ -1,12 +1,16 @@
+import logging
+import time
+
+import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import socketio
-from routes import router as api_router, sio
+
+from routes import get_model, router as api_router, sio, WHISPER_MODEL_NAME
 
 
-app = FastAPI()
+fastapi_app = FastAPI()
 
-app.add_middleware(
+fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -14,7 +18,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(api_router)
+fastapi_app.include_router(api_router)
+
+
+@fastapi_app.on_event("startup")
+async def preload_whisper_model() -> None:
+    logging.getLogger("teleprompt.latency").setLevel(logging.INFO)
+    start = time.perf_counter()
+    await get_model()
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    logging.getLogger("teleprompt.startup").info(
+        "whisper_model_loaded name=%s load_ms=%.1f",
+        WHISPER_MODEL_NAME,
+        elapsed_ms,
+    )
 
 # mount the socket io app in the root
-app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=app)
+app = socketio.ASGIApp(socketio_server=sio, other_asgi_app=fastapi_app)

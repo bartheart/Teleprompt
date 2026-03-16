@@ -5,7 +5,7 @@ import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import get_model, router as api_router, sio, WHISPER_MODEL_NAME
+from routes.routes import WHISPER_MODEL_NAME, get_model, router as api_router, sio
 
 
 fastapi_app = FastAPI()

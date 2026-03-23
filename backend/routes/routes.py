@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import socketio
-import whisper
+from faster_whisper import WhisperModel
 from fastapi import APIRouter
 
 router = APIRouter()
@@ -54,7 +54,7 @@ async def get_model():
     async with model_load_lock:
         if model is not None:
             return model
-        model = await asyncio.to_thread(whisper.load_model, WHISPER_MODEL_NAME)
+        model = await asyncio.to_thread(WhisperModel, WHISPER_MODEL_NAME, device="cpu", compute_type="int8")
         print(f"Whisper model is loaded: {WHISPER_MODEL_NAME}")
         return model
 
@@ -183,13 +183,13 @@ async def audio_pcm(sid, data: bytes):
             else state.audio_samples
         )
         transcribe_start = time.perf_counter()
-        transcription = loaded_model.transcribe(
+        segments, _ = loaded_model.transcribe(
             samples_for_asr,
-            fp16=False,
             language="en",
             temperature=0.0,
             condition_on_previous_text=False,
-        ).get("text", "").strip()
+        )
+        transcription = " ".join(segment.text for segment in segments).strip()
         transcribe_ms = (time.perf_counter() - transcribe_start) * 1000.0
 
         if transcription:

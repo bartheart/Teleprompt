@@ -1,38 +1,44 @@
 type PrompterProps = {
-  transcripts: string[];
-  predictions: string[];
+  transcript: string;
+  prediction: string;
 };
 
-export default function Prompter({ transcripts, predictions }: PrompterProps) {
-  const transcript = transcripts[transcripts.length - 1] ?? "";
+const WORD_OPACITIES = [0.25, 0.55, 1];
+
+export default function Prompter({ transcript, prediction }: PrompterProps) {
+  const words = transcript ? transcript.split(/\s+/).filter(Boolean).slice(-3) : [];
 
   return (
-    <div className="prompter-stack">
-      <section>
-        <h2 className="section-title">Live Transcript</h2>
-        <div className="transcript-stage">
-          {transcript ? (
-            <p className="transcript-line">{transcript}</p>
-          ) : (
-            <p className="muted">No transcript yet. Start and speak to begin.</p>
-          )}
-        </div>
-      </section>
-
-      <section>
-        <h2 className="section-title">Suggested Phrases</h2>
-        {predictions.length === 0 ? (
-          <p className="muted">No suggestions yet.</p>
+    <div className="prompter">
+      <div className="transcript-row">
+        {words.length === 0 ? (
+          <span className="transcript-placeholder">Start speaking…</span>
         ) : (
-          <ul className="suggestion-list">
-            {predictions.map((item, index) => (
-              <li className="suggestion-pill" key={`${item}-${index}`}>
-                {item}
-              </li>
-            ))}
-          </ul>
+          words.map((word, i) => {
+            // align opacities to the right so the last (current) word is always full opacity
+            const opacityIndex = WORD_OPACITIES.length - words.length + i;
+            return (
+              <span
+                key={`${word}-${i}`}
+                className="transcript-word"
+                style={{ opacity: WORD_OPACITIES[opacityIndex] }}
+              >
+                {word}
+              </span>
+            );
+          })
         )}
-      </section>
+      </div>
+
+      <div className="prediction-row">
+        {prediction ? (
+          <span className="prediction-word" key={prediction}>
+            {prediction}
+          </span>
+        ) : (
+          <span className="prediction-placeholder">—</span>
+        )}
+      </div>
     </div>
   );
 }

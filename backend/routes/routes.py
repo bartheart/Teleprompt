@@ -26,6 +26,7 @@ model_load_lock = asyncio.Lock()
 SAMPLE_RATE = 16000
 PROCESS_EVERY_SAMPLES = 8000
 TAIL_WINDOW_SAMPLES = SAMPLE_RATE * 3
+MAX_BUFFER_SAMPLES = SAMPLE_RATE * 20
 MAX_TRANSCRIPT_HISTORY = 8
 DEFAULT_PREDICTION_COUNT = 5
 
@@ -33,9 +34,12 @@ DEFAULT_PREDICTION_COUNT = 5
 class SessionState:
     def __init__(self) -> None:
         self.context = ""
-        self.audio_samples = np.array([], dtype=np.float32)
+        # Double-buffer: audio always accumulates here, never dropped
+        self.active_buffer = np.array([], dtype=np.float32)
         self.last_processed_samples = 0
-        self.is_processing = False
+        # Lock instead of bool flag — audio_pcm still returns early if inference
+        # is running, but only AFTER accumulating the new chunk above
+        self.inference_lock = asyncio.Lock()
         self.full_transcript = ""
         self.prediction_count = DEFAULT_PREDICTION_COUNT
         self.last_audio_received_ms: Optional[int] = None
@@ -143,7 +147,7 @@ async def start_session(sid, payload: Dict[str, str]):
 @sio.event
 async def audio_pcm(sid, data: bytes):
     state = sessions.get(sid)
-    if not state or state.is_processing:
+    if not state:
         return
     receive_ms = int(time.time() * 1000)
     total_start = time.perf_counter()
@@ -168,73 +172,86 @@ async def audio_pcm(sid, data: bytes):
     if batch_id is not None:
         state.last_batch_id = batch_id
 
-    state.audio_samples = np.concatenate((state.audio_samples, pcm))
-    current_samples = len(state.audio_samples)
+    # Double-buffer: always accumulate before any gate — audio is never dropped
+    state.active_buffer = np.concatenate((state.active_buffer, pcm))
+
+    # Trim oldest audio to bound memory; adjust cursor so trigger math stays valid
+    if len(state.active_buffer) > MAX_BUFFER_SAMPLES:
+        excess = len(state.active_buffer) - MAX_BUFFER_SAMPLES
+        state.active_buffer = state.active_buffer[excess:]
+        state.last_processed_samples = max(0, state.last_processed_samples - excess)
+
+    current_samples = len(state.active_buffer)
+
+    # Not enough new audio yet to warrant another inference pass
     if current_samples - state.last_processed_samples < PROCESS_EVERY_SAMPLES:
         return
 
-    state.is_processing = True
-    try:
-        loaded_model = await get_model()
-        state.last_processed_samples = current_samples
+    # Inference already running — audio is safely in active_buffer, skip triggering
+    if state.inference_lock.locked():
+        return
+
+    async with state.inference_lock:
+        # Snapshot cursor at the moment inference fires; active_buffer grows freely during inference
+        state.last_processed_samples = len(state.active_buffer)
         samples_for_asr = (
-            state.audio_samples[-TAIL_WINDOW_SAMPLES:]
-            if current_samples > TAIL_WINDOW_SAMPLES
-            else state.audio_samples
+            state.active_buffer[-TAIL_WINDOW_SAMPLES:]
+            if len(state.active_buffer) > TAIL_WINDOW_SAMPLES
+            else state.active_buffer.copy()
         )
-        transcribe_start = time.perf_counter()
-        segments, _ = loaded_model.transcribe(
-            samples_for_asr,
-            language="en",
-            temperature=0.0,
-            condition_on_previous_text=False,
-        )
-        transcription = " ".join(segment.text for segment in segments).strip()
-        transcribe_ms = (time.perf_counter() - transcribe_start) * 1000.0
 
-        if transcription:
-            delta = append_delta(state.full_transcript, transcription)
-            if delta:
-                state.full_transcript = f"{state.full_transcript} {delta}".strip()
-
-            current_word = state.full_transcript.split()[-1] if state.full_transcript else ""
-            await sio.emit(
-                "transcription",
-                {
-                    "text": current_word,
-                    "current_word": current_word,
-                    "delta_text": delta,
-                    "full_text": state.full_transcript,
-                    "batch_id": state.last_batch_id,
-                },
-                room=sid,
+        transcribe_ms = 0.0
+        try:
+            loaded_model = await get_model()
+            transcribe_start = time.perf_counter()
+            segments, _ = loaded_model.transcribe(
+                samples_for_asr,
+                language="en",
+                temperature=0.0,
+                condition_on_previous_text=False,
             )
-            predictions = generate_predictions(
-                context=state.context,
-                transcript_text=state.full_transcript,
-                count=state.prediction_count,
-            )
-            await sio.emit("predictions", {"items": predictions}, room=sid)
+            transcription = " ".join(segment.text for segment in segments).strip()
+            transcribe_ms = (time.perf_counter() - transcribe_start) * 1000.0
 
-        total_ms = (time.perf_counter() - total_start) * 1000.0
-        buffered_seconds = len(state.audio_samples) / SAMPLE_RATE
-        client_to_server_ms = None
-        if state.last_client_sent_at_ms is not None:
-            client_to_server_ms = receive_ms - state.last_client_sent_at_ms
-        if logger.isEnabledFor(logging.INFO):
-            logger.info(
-                "audio_pcm_processed sid=%s transcribe_ms=%.1f total_ms=%.1f buffered_s=%.2f client_to_server_ms=%s",
-                sid,
-                transcribe_ms,
-                total_ms,
-                buffered_seconds,
-                f"{client_to_server_ms:.1f}" if client_to_server_ms is not None else "n/a",
-            )
+            if transcription:
+                delta = append_delta(state.full_transcript, transcription)
+                if delta:
+                    state.full_transcript = f"{state.full_transcript} {delta}".strip()
 
-    except Exception as exc:  # pragma: no cover - runtime safety for live pipeline
-        await sio.emit("server_error", {"message": str(exc)}, room=sid)
-    finally:
-        if len(state.audio_samples) > SAMPLE_RATE * 20:
-            state.audio_samples = state.audio_samples[-SAMPLE_RATE * 20 :]
-            state.last_processed_samples = len(state.audio_samples)
-        state.is_processing = False
+                current_word = state.full_transcript.split()[-1] if state.full_transcript else ""
+                await sio.emit(
+                    "transcription",
+                    {
+                        "text": current_word,
+                        "current_word": current_word,
+                        "delta_text": delta,
+                        "full_text": state.full_transcript,
+                        "batch_id": state.last_batch_id,
+                        "transcribe_ms": round(transcribe_ms),
+                    },
+                    room=sid,
+                )
+                predictions = generate_predictions(
+                    context=state.context,
+                    transcript_text=state.full_transcript,
+                    count=state.prediction_count,
+                )
+                await sio.emit("predictions", {"items": predictions}, room=sid)
+
+            total_ms = (time.perf_counter() - total_start) * 1000.0
+            buffered_seconds = len(state.active_buffer) / SAMPLE_RATE
+            client_to_server_ms = None
+            if state.last_client_sent_at_ms is not None:
+                client_to_server_ms = receive_ms - state.last_client_sent_at_ms
+            if logger.isEnabledFor(logging.INFO):
+                logger.info(
+                    "audio_pcm_processed sid=%s transcribe_ms=%.1f total_ms=%.1f buffered_s=%.2f client_to_server_ms=%s",
+                    sid,
+                    transcribe_ms,
+                    total_ms,
+                    buffered_seconds,
+                    f"{client_to_server_ms:.1f}" if client_to_server_ms is not None else "n/a",
+                )
+
+        except Exception as exc:  # pragma: no cover - runtime safety for live pipeline
+            await sio.emit("server_error", {"message": str(exc)}, room=sid)

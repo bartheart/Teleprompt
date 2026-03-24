@@ -27,7 +27,7 @@ export default function Recorder({
     const startInFlightRef = useRef(false);
     const wasActiveRef = useRef(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
-    const socket = useRef<Socket | null >(null);
+    const socket = useRef<Socket | null>(null);
     const [isConnected, setIsConnected] = useState<boolean>(false);
     const lastAudioSendAtRef = useRef<number | null>(null);
     const audioFrameSeqRef = useRef(0);
@@ -41,13 +41,24 @@ export default function Recorder({
     const batchStartAtMsRef = useRef<number | null>(null);
     const batchStartByIdRef = useRef<Map<number, number>>(new Map());
 
+    // Refs so reconnect handler always sees latest props without stale closure
+    const contextRef = useRef(context);
+    const predictionCountRef = useRef(predictionCount);
+    useEffect(() => {
+        contextRef.current = context;
+        predictionCountRef.current = predictionCount;
+    }, [context, predictionCount]);
+
     const initializeSocket = useCallback(() => {
         if (socket.current) return;
 
         const newSocket = io(backendUrl, {
             transports: ['websocket'],
             autoConnect: false,
-            reconnection: false,
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
         });
 
         newSocket.on('connect_error', (error) => {
@@ -57,15 +68,32 @@ export default function Recorder({
 
         newSocket.on('connect', () => {
             setIsConnected(true);
-        })
+        });
 
         newSocket.on('disconnect', () => {
             setIsConnected(false);
         });
 
+        // Re-establish session state on the backend after a reconnect
+        newSocket.on('reconnect', () => {
+            console.info('[socket] reconnected — re-establishing session');
+            newSocket.emit("start_session", {
+                context: contextRef.current,
+                predictionCount: predictionCountRef.current,
+            });
+        });
+
+        newSocket.on('reconnect_attempt', (attempt: number) => {
+            console.info(`[socket] reconnect attempt ${attempt}`);
+        });
+
+        newSocket.on('reconnect_failed', () => {
+            setError("Connection lost. Please stop and restart the session.");
+        });
+
         newSocket.on(
             "transcription",
-            (response: { text?: string; current_word?: string; full_text?: string }) => {
+            (response: { text?: string; current_word?: string; full_text?: string; batch_id?: number; transcribe_ms?: number }) => {
                 const fullText = response?.full_text?.trim() ?? "";
                 const trailingWords = fullText
                     ? fullText.split(/\s+/).slice(-3).join(" ")
@@ -75,19 +103,20 @@ export default function Recorder({
                     onTranscript(trailingWords);
                     const now = performance.now();
                     const lastSend = lastAudioSendAtRef.current;
-                    const responseBatchId = (response as { batch_id?: number }).batch_id;
+                    const responseBatchId = response.batch_id;
                     const nowMs = Date.now();
+
                     if (typeof responseBatchId === "number") {
                         const batchStart = batchStartByIdRef.current.get(responseBatchId);
                         if (batchStart) {
                             const endToEndMs = nowMs - batchStart;
                             console.info(
-                                `[latency] end_to_end_ms=${Math.round(endToEndMs)} batch_id=${responseBatchId}`,
+                                `[latency] end_to_end_ms=${Math.round(endToEndMs)} server_transcribe_ms=${response.transcribe_ms ?? "n/a"} batch_id=${responseBatchId}`,
                             );
                             batchStartByIdRef.current.delete(responseBatchId);
                         } else {
                             console.info(
-                                `[latency] end_to_end_ms=unknown batch_id=${responseBatchId}`,
+                                `[latency] end_to_end_ms=unknown server_transcribe_ms=${response.transcribe_ms ?? "n/a"} batch_id=${responseBatchId}`,
                             );
                         }
                     }
@@ -112,8 +141,8 @@ export default function Recorder({
         newSocket.on("server_error", (response: { message?: string }) => {
             setError(response?.message ?? "Unknown server error");
         });
-       
-        socket.current = newSocket
+
+        socket.current = newSocket;
     }, [backendUrl, onPredictions, onTranscript]);
 
 

@@ -7,6 +7,7 @@ type RecorderProps = {
   predictionCount: number;
   onTranscript: (text: string) => void;
   onPredictions: (items: string[]) => void;
+  onAmplitude?: (rms: number) => void;
   active: boolean;
 };
 
@@ -15,6 +16,7 @@ export default function Recorder({
   predictionCount,
   onTranscript,
   onPredictions,
+  onAmplitude,
   active,
 }: RecorderProps) {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8000";
@@ -241,6 +243,14 @@ export default function Recorder({
             workletNodeRef.current = workletNode;
 
             const handlePcmChunk = (int16: Int16Array) => {
+                if (onAmplitude) {
+                    let sum = 0;
+                    for (let k = 0; k < int16.length; k++) {
+                        const s = int16[k] / 32768;
+                        sum += s * s;
+                    }
+                    onAmplitude(Math.min(1, Math.sqrt(sum / int16.length) * 6));
+                }
                 const currentBatchId = batchIdRef.current;
                 if (batchSamplesRef.current === 0) {
                     const batchStartMs = Date.now();
@@ -324,7 +334,7 @@ export default function Recorder({
         } finally {
             startInFlightRef.current = false;
         }
-    }, [context, predictionCount, initializeSocket, isRecording, stopRecording]);
+    }, [context, predictionCount, initializeSocket, isRecording, stopRecording, onAmplitude]);
 
     useEffect(() => {
         if (active && !wasActiveRef.current) {

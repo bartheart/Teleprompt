@@ -29,6 +29,7 @@ TAIL_WINDOW_SAMPLES = SAMPLE_RATE * 3
 MAX_BUFFER_SAMPLES = SAMPLE_RATE * 20
 MAX_TRANSCRIPT_HISTORY = 8
 DEFAULT_PREDICTION_COUNT = 5
+SILENCE_RMS_THRESHOLD = 0.01  # float32 normalized; ~-40 dBFS
 
 
 class SessionState:
@@ -77,6 +78,12 @@ def append_delta(existing_text: str, new_text: str) -> str:
             break
 
     return " ".join(new_words[overlap:]).strip()
+
+
+def is_silent(samples: np.ndarray, threshold: float = SILENCE_RMS_THRESHOLD) -> bool:
+    if samples.size == 0:
+        return True
+    return float(np.sqrt(np.mean(samples ** 2))) < threshold
 
 
 def generate_predictions(context: str, transcript_text: str, count: int) -> List[str]:
@@ -199,6 +206,9 @@ async def audio_pcm(sid, data: bytes):
             if len(state.active_buffer) > TAIL_WINDOW_SAMPLES
             else state.active_buffer.copy()
         )
+
+        if is_silent(samples_for_asr):
+            return
 
         transcribe_ms = 0.0
         try:

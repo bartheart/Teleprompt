@@ -134,7 +134,7 @@ export default function Home() {
             onPredictionModel={setPredictionModel}
           />
           {predictionModel && (
-            <p className={`pill ${predictionModel === "claude-haiku" ? "ok" : ""}`}>
+            <p className="status-text">
               {predictionModel === "claude-haiku" ? "Powered by Claude" : "Basic predictions"}
             </p>
           )}

@@ -273,6 +273,14 @@ body {
   width: 100%;
 }
 
+.status-text {
+  margin: 0;
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--ink-mid);
+  opacity: 0.5;
+}
+
 .status-row {
   display: flex;
   justify-content: center;

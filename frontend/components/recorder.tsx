@@ -363,14 +363,6 @@ export default function Recorder({
 
     return (
         <div>
-            <div className="status-row">
-                <p className={`pill ${isConnected ? "ok" : "warn"}`}>
-                    Socket: {isConnected ? "Connected" : "Disconnected"}
-                </p>
-                <p className={`pill ${isRecording ? "ok" : ""}`}>
-                    Recorder: {isRecording ? "Recording" : "Idle"}
-                </p>
-            </div>
             {error && <p className="error">{error}</p>}
         </div>
     );

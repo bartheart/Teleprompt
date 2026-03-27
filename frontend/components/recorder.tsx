@@ -32,6 +32,7 @@ export default function Recorder({
     const wasActiveRef = useRef(false);
     const [isRecording, setIsRecording] = useState<boolean>(false);
     const socket = useRef<Socket | null>(null);
+    const [isConnected, setIsConnected] = useState<boolean>(false);
     const lastAudioSendAtRef = useRef<number | null>(null);
     const audioFrameSeqRef = useRef(0);
     const LOG_EVERY_N_FRAMES = 20;
@@ -75,9 +76,13 @@ export default function Recorder({
             }
         });
 
-        newSocket.on('connect', () => {});
+        newSocket.on('connect', () => {
+            setIsConnected(true);
+        });
 
-        newSocket.on('disconnect', () => {});
+        newSocket.on('disconnect', () => {
+            setIsConnected(false);
+        });
 
         // Re-establish session state on the backend after a reconnect
         newSocket.on('reconnect', () => {
@@ -358,6 +363,14 @@ export default function Recorder({
 
     return (
         <div>
+            <div className="status-row">
+                <p className={`pill ${isConnected ? "ok" : "warn"}`}>
+                    Socket: {isConnected ? "Connected" : "Disconnected"}
+                </p>
+                <p className={`pill ${isRecording ? "ok" : ""}`}>
+                    Recorder: {isRecording ? "Recording" : "Idle"}
+                </p>
+            </div>
             {error && <p className="error">{error}</p>}
         </div>
     );

@@ -27,6 +27,7 @@ export default function Home() {
   const [isActive, setIsActive] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [predictions, setPredictions] = useState<string[]>([]);
+  const [predictionModel, setPredictionModel] = useState("");
   const [dark, setDark] = useState(false);
   const [amplitude, setAmplitude] = useState(0);
   const smoothedAmpRef = useRef(0);
@@ -130,7 +131,13 @@ export default function Home() {
             onTranscript={handleTranscript}
             onPredictions={handlePredictions}
             onAmplitude={handleAmplitude}
+            onPredictionModel={setPredictionModel}
           />
+          {predictionModel && (
+            <p className={`pill ${predictionModel === "claude-haiku" ? "ok" : ""}`}>
+              {predictionModel === "claude-haiku" ? "Powered by Claude" : "Basic predictions"}
+            </p>
+          )}
         </div>
       </div>
     </div>

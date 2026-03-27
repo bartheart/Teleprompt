@@ -4,7 +4,7 @@ Tests for Socket.IO session lifecycle handlers: connect, disconnect, start_sessi
 
 import sys
 import types
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -49,9 +49,10 @@ async def test_connect_emits_connect_response():
     with patch("routes.routes.sio") as mock_sio:
         mock_sio.emit = AsyncMock()
         await connect(sid, {})
-        mock_sio.emit.assert_called_once_with(
-            "connect_response", {"status": "connected"}, room=sid
-        )
+        call_args = mock_sio.emit.call_args
+        assert call_args.args[0] == "connect_response"
+        assert call_args.args[1]["status"] == "connected"
+        assert "prediction_model" in call_args.args[1]
 
     sessions.pop(sid, None)
 
@@ -142,3 +143,51 @@ async def test_start_session_unknown_sid_is_safe():
 async def test_start_session_trims_context_whitespace(fresh_session):
     await start_session(fresh_session, {"context": "  trimmed  ", "predictionCount": 5})
     assert sessions[fresh_session].context == "trimmed"
+
+
+# ---------------------------------------------------------------------------
+# connect_response includes prediction_model
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_connect_response_includes_model_claude():
+    """connect_response has prediction_model=claude-haiku when client is initialised."""
+    import routes.routes as routes_module
+    sid = "model-test-claude"
+    sessions.pop(sid, None)
+
+    captured = {}
+    async def capture_emit(event, data, **_):
+        captured[event] = data
+
+    with (
+        patch.object(routes_module, "_anthropic_client", MagicMock()),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = capture_emit
+        await connect(sid, {})
+
+    assert captured["connect_response"]["prediction_model"] == "claude-haiku"
+    sessions.pop(sid, None)
+
+
+@pytest.mark.asyncio
+async def test_connect_response_includes_model_basic():
+    """connect_response has prediction_model=basic when client is None (no key)."""
+    import routes.routes as routes_module
+    sid = "model-test-basic"
+    sessions.pop(sid, None)
+
+    captured = {}
+    async def capture_emit(event, data, **_):
+        captured[event] = data
+
+    with (
+        patch.object(routes_module, "_anthropic_client", None),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = capture_emit
+        await connect(sid, {})
+
+    assert captured["connect_response"]["prediction_model"] == "basic"
+    sessions.pop(sid, None)

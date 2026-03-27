@@ -1,9 +1,14 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the Recorder component — it requires WebAudio + Socket.IO
+// Expose onPredictionModel so tests can invoke it directly
+let capturedOnPredictionModel: ((model: string) => void) | undefined;
 vi.mock("../components/recorder", () => ({
-  default: () => <div data-testid="recorder-mock" />,
+  default: (props: { onPredictionModel?: (model: string) => void }) => {
+    capturedOnPredictionModel = props.onPredictionModel;
+    return <div data-testid="recorder-mock" />;
+  },
 }));
 
 import Home from "../app/page";
@@ -91,5 +96,28 @@ describe("Home — active screen", () => {
     fireEvent.click(screen.getByRole("button", { name: /start teleprompter/i }));
     fireEvent.click(screen.getByRole("button", { name: /stop listening/i }));
     expect(screen.getByRole("button", { name: /start teleprompter/i })).toBeInTheDocument();
+  });
+});
+
+describe("Home — prediction model pill", () => {
+  it("does not show a pill before model is known", () => {
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: /start teleprompter/i }));
+    expect(screen.queryByText("Powered by Claude")).not.toBeInTheDocument();
+    expect(screen.queryByText("Basic predictions")).not.toBeInTheDocument();
+  });
+
+  it("shows 'Powered by Claude' when model is claude-haiku", () => {
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: /start teleprompter/i }));
+    act(() => { capturedOnPredictionModel?.("claude-haiku"); });
+    expect(screen.getByText("Powered by Claude")).toBeInTheDocument();
+  });
+
+  it("shows 'Basic predictions' when model is basic", () => {
+    render(<Home />);
+    fireEvent.click(screen.getByRole("button", { name: /start teleprompter/i }));
+    act(() => { capturedOnPredictionModel?.("basic"); });
+    expect(screen.getByText("Basic predictions")).toBeInTheDocument();
   });
 });

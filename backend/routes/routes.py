@@ -186,7 +186,14 @@ async def home() -> str:
 @sio.event
 async def connect(sid, environ):
     sessions[sid] = SessionState()
-    await sio.emit("connect_response", {"status": "connected"}, room=sid)
+    await sio.emit(
+        "connect_response",
+        {
+            "status": "connected",
+            "prediction_model": "claude-haiku" if _anthropic_client else "basic",
+        },
+        room=sid,
+    )
 
 
 @sio.event

@@ -7,3 +7,5 @@ requests>=2.31.0
 setuptools>=70.0.0
 wheel>=0.45.0
 setuptools<81
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

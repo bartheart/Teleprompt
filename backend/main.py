@@ -1,6 +1,9 @@
 import logging
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

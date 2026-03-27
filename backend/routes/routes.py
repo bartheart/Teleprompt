@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import socketio
+from anthropic import AsyncAnthropic
 from faster_whisper import WhisperModel
 from fastapi import APIRouter
 
@@ -31,6 +32,11 @@ MAX_TRANSCRIPT_HISTORY = 8
 DEFAULT_PREDICTION_COUNT = 5
 SILENCE_RMS_THRESHOLD = 0.01  # float32 normalized; ~-40 dBFS
 
+_ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+_anthropic_client: Optional[AsyncAnthropic] = (
+    AsyncAnthropic(api_key=_ANTHROPIC_API_KEY) if _ANTHROPIC_API_KEY else None
+)
+
 
 class SessionState:
     def __init__(self) -> None:
@@ -46,6 +52,7 @@ class SessionState:
         self.last_audio_received_ms: Optional[int] = None
         self.last_client_sent_at_ms: Optional[int] = None
         self.last_batch_id: Optional[int] = None
+        self.prediction_task: Optional[asyncio.Task] = None
 
 
 sessions: Dict[str, SessionState] = {}
@@ -86,7 +93,7 @@ def is_silent(samples: np.ndarray, threshold: float = SILENCE_RMS_THRESHOLD) -> 
     return float(np.sqrt(np.mean(samples ** 2))) < threshold
 
 
-def generate_predictions(context: str, transcript_text: str, count: int) -> List[str]:
+def _bigram_fallback(context: str, transcript_text: str, count: int) -> List[str]:
     text = transcript_text.strip().lower()
     words = [w.strip(".,!?;:()[]{}\"'") for w in text.split() if w.strip(".,!?;:()[]{}\"'")]
     if not words:
@@ -120,6 +127,57 @@ def generate_predictions(context: str, transcript_text: str, count: int) -> List
     return result
 
 
+async def stream_llm_prediction(sid: str, context: str, transcript_text: str) -> None:
+    """
+    Fire-and-forget coroutine. Streams a 4-8 word phrase from Claude Haiku,
+    emitting progressive `predictions` updates as tokens arrive.
+    Falls back to bigram predictions silently on any failure or missing key.
+    """
+    if _anthropic_client is None:
+        fallback = _bigram_fallback(context, transcript_text, 1)
+        await sio.emit("predictions", {"items": fallback}, room=sid)
+        return
+
+    system_prompt = (
+        "You are a real-time speech assistant helping a speaker recover their train of "
+        "thought mid-sentence. Given the speaker's preparation notes (context) and what "
+        "they have said so far (transcript), complete their next thought with a natural, "
+        "fluent phrase of exactly 4 to 8 words. Output ONLY the phrase — no punctuation, "
+        "no explanation, no quotation marks."
+    )
+    user_message = (
+        f"Context (speaker's notes):\n{context or '(none)'}\n\n"
+        f"Transcript so far:\n{transcript_text or '(none)'}\n\n"
+        "Continue the speaker's next phrase (4-8 words):"
+    )
+
+    accumulated = ""
+    try:
+        async with _anthropic_client.messages.stream(
+            model="claude-haiku-4-5",
+            max_tokens=24,
+            temperature=0.4,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        ) as stream:
+            async for text_delta in stream.text_stream:
+                accumulated = (accumulated + text_delta).strip()
+                if accumulated:
+                    await sio.emit("predictions", {"items": [accumulated]}, room=sid)
+
+        if not accumulated:
+            fallback = _bigram_fallback(context, transcript_text, 1)
+            if fallback:
+                await sio.emit("predictions", {"items": fallback}, room=sid)
+
+    except asyncio.CancelledError:
+        raise  # let cancellation propagate cleanly
+    except Exception:
+        fallback = _bigram_fallback(context, transcript_text, 1)
+        if fallback:
+            await sio.emit("predictions", {"items": fallback}, room=sid)
+
+
 @router.get("/")
 async def home() -> str:
     return "Teleprompt backend is running"
@@ -133,7 +191,9 @@ async def connect(sid, environ):
 
 @sio.event
 async def disconnect(sid):
-    sessions.pop(sid, None)
+    state = sessions.pop(sid, None)
+    if state and state.prediction_task and not state.prediction_task.done():
+        state.prediction_task.cancel()
 
 
 @sio.event
@@ -241,12 +301,13 @@ async def audio_pcm(sid, data: bytes):
                     },
                     room=sid,
                 )
-                predictions = generate_predictions(
-                    context=state.context,
-                    transcript_text=state.full_transcript,
-                    count=state.prediction_count,
+
+                # Cancel stale prediction and stream a new one non-blocking
+                if state.prediction_task and not state.prediction_task.done():
+                    state.prediction_task.cancel()
+                state.prediction_task = asyncio.create_task(
+                    stream_llm_prediction(sid, state.context, state.full_transcript)
                 )
-                await sio.emit("predictions", {"items": predictions}, room=sid)
 
             total_ms = (time.perf_counter() - total_start) * 1000.0
             buffered_seconds = len(state.active_buffer) / SAMPLE_RATE

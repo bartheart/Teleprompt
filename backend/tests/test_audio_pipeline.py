@@ -3,6 +3,7 @@ Tests for the audio_pcm handler: buffering, inference gating,
 buffer trimming, and error recovery.
 """
 
+import asyncio
 import math
 import sys
 import types
@@ -185,22 +186,47 @@ async def test_transcription_event_payload_has_expected_keys(sid):
 
 
 @pytest.mark.asyncio
-async def test_predictions_event_emitted_after_transcription(sid):
-    """A predictions event follows every transcription event."""
+async def test_predictions_task_scheduled_after_transcription(sid):
+    """A prediction task is scheduled (non-blocking) after a transcription fires."""
     model = mock_model_with("one two three")
-    emitted_events = []
 
-    async def capture_emit(event, data, **_):
-        emitted_events.append(event)
+    mock_stream_llm = AsyncMock()
 
     with (
         patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", mock_stream_llm),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await audio_pcm(sid, make_pcm(speech(9000)))
+        await asyncio.sleep(0)  # let the event loop run the created task
+
+    mock_stream_llm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_transcription_emitted_before_prediction_task(sid):
+    """transcription event is emitted before the prediction task fires."""
+    import asyncio as _asyncio
+    model = mock_model_with("hello world")
+    order = []
+
+    async def capture_emit(event, data, **_):
+        order.append(event)
+
+    async def fake_stream(*_, **__):
+        order.append("predictions")
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", fake_stream),
         patch("routes.routes.sio") as mock_sio,
     ):
         mock_sio.emit = capture_emit
         await audio_pcm(sid, make_pcm(speech(9000)))
+        await _asyncio.sleep(0)
 
-    assert "predictions" in emitted_events
+    assert order.index("transcription") < order.index("predictions")
 
 
 # ---------------------------------------------------------------------------

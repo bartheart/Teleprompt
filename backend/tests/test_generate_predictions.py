@@ -10,10 +10,10 @@ if "faster_whisper" not in sys.modules:
     fw.WhisperModel = object  # type: ignore[attr-defined]
     sys.modules["faster_whisper"] = fw
 
-from routes.routes import generate_predictions
+from routes.routes import _bigram_fallback as generate_predictions
 
 
-class TestGeneratePredictions:
+class TestBigramFallback:
     # ------------------------------------------------------------------
     # Count enforcement
     # ------------------------------------------------------------------

@@ -133,13 +133,13 @@ export default function Home() {
             onAmplitude={handleAmplitude}
             onPredictionModel={setPredictionModel}
           />
-          {predictionModel && (
-            <p className="status-text">
-              {predictionModel === "claude-haiku" ? "Powered by Claude" : "Basic predictions"}
-            </p>
-          )}
         </div>
       </div>
+      {predictionModel && (
+        <p className="status-text">
+          {predictionModel === "claude-haiku" ? "Powered by Claude" : "Basic predictions"}
+        </p>
+      )}
     </div>
   );
 }

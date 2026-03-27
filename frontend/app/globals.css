@@ -274,6 +274,10 @@ body {
 }
 
 .status-text {
+  position: fixed;
+  bottom: 16px;
+  left: 0;
+  right: 0;
   margin: 0;
   text-align: center;
   font-size: 0.72rem;

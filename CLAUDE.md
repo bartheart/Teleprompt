@@ -26,6 +26,10 @@
 
 6. **Push and open a PR** — push the branch and create a GitHub PR with a clear summary and test plan.
 
+## Backlog
+
+Any feature or improvement that is out of scope for the current task must be captured as a GitHub issue before moving on. Do not add TODO comments in code — open an issue instead.
+
 ## Permissions
 
 - Planning mode approval is required before implementation begins.

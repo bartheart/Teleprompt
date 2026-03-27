@@ -275,6 +275,10 @@ async def audio_pcm(sid, data: bytes):
         )
 
         if is_silent(samples_for_asr):
+            if state.prediction_task and not state.prediction_task.done():
+                state.prediction_task.cancel()
+                state.prediction_task = None
+            await sio.emit("predictions", {"items": []}, room=sid)
             return
 
         transcribe_ms = 0.0

@@ -166,8 +166,8 @@ async def test_speech_emits_transcription_event(session_id):
 
 
 @pytest.mark.asyncio
-async def test_silent_audio_emits_no_events(session_id):
-    """No Socket.IO events are emitted during silence."""
+async def test_silent_audio_emits_predictions_clear(session_id):
+    """Silence emits predictions with empty items to clear the UI."""
     mock_model = MagicMock()
 
     with (
@@ -179,4 +179,48 @@ async def test_silent_audio_emits_no_events(session_id):
         pcm = make_pcm_bytes(silent_samples(9000))
         await audio_pcm(session_id, pcm)
 
-        mock_sio.emit.assert_not_called()
+        mock_sio.emit.assert_called_once_with(
+            "predictions", {"items": []}, room=session_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_silence_cancels_prediction_task(session_id):
+    """Active prediction task is cancelled when silence is detected."""
+    mock_task = MagicMock()
+    mock_task.done.return_value = False
+    mock_task.cancel = MagicMock()
+    sessions[session_id].prediction_task = mock_task
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock()),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+
+        pcm = make_pcm_bytes(silent_samples(9000))
+        await audio_pcm(session_id, pcm)
+
+        mock_task.cancel.assert_called_once()
+        mock_sio.emit.assert_called_once_with(
+            "predictions", {"items": []}, room=session_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_silence_clears_prediction_when_no_task(session_id):
+    """No crash and predictions are cleared when silence hits with no active task."""
+    sessions[session_id].prediction_task = None
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock()),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+
+        pcm = make_pcm_bytes(silent_samples(9000))
+        await audio_pcm(session_id, pcm)
+
+        mock_sio.emit.assert_called_once_with(
+            "predictions", {"items": []}, room=session_id
+        )

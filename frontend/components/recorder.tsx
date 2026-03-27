@@ -8,6 +8,7 @@ type RecorderProps = {
   onTranscript: (text: string) => void;
   onPredictions: (items: string[]) => void;
   onAmplitude?: (rms: number) => void;
+  onPredictionModel?: (model: string) => void;
   active: boolean;
 };
 
@@ -17,6 +18,7 @@ export default function Recorder({
   onTranscript,
   onPredictions,
   onAmplitude,
+  onPredictionModel,
   active,
 }: RecorderProps) {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://127.0.0.1:8000";
@@ -66,6 +68,12 @@ export default function Recorder({
         newSocket.on('connect_error', (error) => {
             console.error('Socket connection error:', error);
             setError(`Socket error: ${error.message}`);
+        });
+
+        newSocket.on('connect_response', (response: { status?: string; prediction_model?: string }) => {
+            if (onPredictionModel) {
+                onPredictionModel(response?.prediction_model ?? "basic");
+            }
         });
 
         newSocket.on('connect', () => {
@@ -145,7 +153,7 @@ export default function Recorder({
         });
 
         socket.current = newSocket;
-    }, [backendUrl, onPredictions, onTranscript]);
+    }, [backendUrl, onPredictions, onTranscript, onPredictionModel]);
 
 
 

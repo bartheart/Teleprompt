@@ -273,6 +273,18 @@ body {
   width: 100%;
 }
 
+.status-text {
+  position: fixed;
+  bottom: 16px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--ink-mid);
+  opacity: 0.5;
+}
+
 .status-row {
   display: flex;
   justify-content: center;

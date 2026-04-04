@@ -280,3 +280,92 @@ async def test_dict_payload_with_metadata(sid):
 async def test_dict_payload_missing_pcm_does_not_raise(sid):
     """Dict payload without 'pcm' key is handled gracefully."""
     await audio_pcm(sid, {"client_sent_at_ms": 123})
+
+
+# ---------------------------------------------------------------------------
+# Prediction debounce: finish-then-refresh
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prediction_fires_when_task_is_free_and_new_words(sid):
+    """Prediction task is created when no task is running and new words arrive."""
+    model = mock_model_with("hello world")
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", AsyncMock()) as mock_llm,
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await audio_pcm(sid, make_pcm(speech(9000)))
+        await asyncio.sleep(0)
+
+    mock_llm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_prediction_does_not_interrupt_running_task(sid):
+    """A running prediction task is NOT cancelled when new words arrive."""
+    model = mock_model_with("hello world")
+
+    running_task = MagicMock()
+    running_task.done.return_value = False
+    running_task.cancel = MagicMock()
+    sessions[sid].prediction_task = running_task
+    sessions[sid].last_predicted_word_count = 0  # new words will arrive
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", AsyncMock()),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await audio_pcm(sid, make_pcm(speech(9000)))
+
+    running_task.cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_prediction_restarts_when_task_done_and_new_words(sid):
+    """A new prediction fires once the previous task is done and new words arrived."""
+    model = mock_model_with("one two three four")
+
+    done_task = MagicMock()
+    done_task.done.return_value = True
+    sessions[sid].prediction_task = done_task
+    sessions[sid].last_predicted_word_count = 0
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", AsyncMock()) as mock_llm,
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await audio_pcm(sid, make_pcm(speech(9000)))
+        await asyncio.sleep(0)
+
+    mock_llm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_prediction_does_not_refire_same_word_count(sid):
+    """No new prediction fires when word count hasn't grown since last prediction."""
+    model = mock_model_with("hello world")
+
+    # Simulate: prediction already ran for these exact words
+    sessions[sid].last_predicted_word_count = 2  # "hello world" = 2 words
+
+    done_task = MagicMock()
+    done_task.done.return_value = True
+    sessions[sid].prediction_task = done_task
+
+    with (
+        patch("routes.routes.get_model", new=AsyncMock(return_value=model)),
+        patch("routes.routes.stream_llm_prediction", AsyncMock()) as mock_llm,
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await audio_pcm(sid, make_pcm(speech(9000)))
+        await asyncio.sleep(0)
+
+    mock_llm.assert_not_called()

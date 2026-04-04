@@ -176,11 +176,12 @@ async def test_falls_back_on_empty_stream(sid):
 
 
 # ---------------------------------------------------------------------------
-# 5. In-flight task is cancelled when a new transcription fires
+# 5. In-flight task is NOT cancelled when a new transcription fires
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_previous_prediction_task_cancelled_on_new_transcription(sid):
+async def test_running_prediction_task_not_interrupted_on_new_transcription(sid):
+    """A still-running prediction is left alone when new words arrive; no new task is spawned."""
     from routes.routes import audio_pcm
     import math
     import numpy as np
@@ -222,13 +223,14 @@ async def test_previous_prediction_task_cancelled_on_new_transcription(sid):
         await audio_pcm(sid, speech_pcm())
         first_task = sessions[sid].prediction_task
         assert first_task is not None
+        assert not first_task.done()  # still running (slow stream)
 
-        # Second audio chunk — should cancel the first task
+        # Second audio chunk — task is still running, should NOT be replaced
         await audio_pcm(sid, speech_pcm())
         second_task = sessions[sid].prediction_task
 
-        # Give the event loop a tick to process cancellation
         await asyncio.sleep(0)
 
-        assert first_task.cancelled() or first_task.done()
-        assert second_task is not first_task
+        # Same task object — not interrupted, not replaced
+        assert second_task is first_task
+        assert not first_task.cancelled()

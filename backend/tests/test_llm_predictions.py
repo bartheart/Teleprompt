@@ -234,3 +234,67 @@ async def test_running_prediction_task_not_interrupted_on_new_transcription(sid)
         # Same task object — not interrupted, not replaced
         assert second_task is first_task
         assert not first_task.cancelled()
+
+
+# ---------------------------------------------------------------------------
+# 6. Prompt uses "unstuck" framing, context as scope, 1-3 words, max_tokens=12
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prompt_uses_unstuck_framing_and_context_scope(sid):
+    """System prompt frames goal as getting speaker unstuck; context treated as scope."""
+    captured_kwargs = {}
+
+    @asynccontextmanager
+    async def capturing_ctx(**kwargs):
+        captured_kwargs.update(kwargs)
+        mock_stream = MagicMock()
+        mock_stream.text_stream = make_async_text_stream(["next"])
+        yield mock_stream
+
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: capturing_ctx(**kw))
+
+    with (
+        patch.object(routes_module, "_anthropic_client", mock_client),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "machine learning seminar", "the key insight is")
+
+    system = captured_kwargs.get("system", "")
+    user_msg = captured_kwargs.get("messages", [{}])[0].get("content", "")
+
+    assert "unstuck" in system.lower() or "blank" in system.lower(), \
+        "system prompt should reference getting the speaker unstuck"
+    assert "1" in system and "3" in system, \
+        "system prompt should specify 1 to 3 words"
+    assert "scope" in system.lower() or "domain" in system.lower(), \
+        "system prompt should reference context as scope/domain"
+    assert "machine learning seminar" in user_msg, \
+        "context should appear in user message"
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_is_twelve(sid):
+    """Claude is called with max_tokens=12 for short phrase predictions."""
+    captured_kwargs = {}
+
+    @asynccontextmanager
+    async def capturing_ctx(**kwargs):
+        captured_kwargs.update(kwargs)
+        mock_stream = MagicMock()
+        mock_stream.text_stream = make_async_text_stream(["go"])
+        yield mock_stream
+
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: capturing_ctx(**kw))
+
+    with (
+        patch.object(routes_module, "_anthropic_client", mock_client),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "context", "some transcript")
+
+    assert captured_kwargs.get("max_tokens") == 12

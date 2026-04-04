@@ -53,6 +53,7 @@ class SessionState:
         self.last_client_sent_at_ms: Optional[int] = None
         self.last_batch_id: Optional[int] = None
         self.prediction_task: Optional[asyncio.Task] = None
+        self.last_predicted_word_count: int = 0
 
 
 sessions: Dict[str, SessionState] = {}
@@ -211,6 +212,7 @@ async def start_session(sid, payload: Dict[str, str]):
 
     state.context = (payload or {}).get("context", "").strip()
     state.full_transcript = ""
+    state.last_predicted_word_count = 0
     prediction_count = (payload or {}).get("predictionCount", DEFAULT_PREDICTION_COUNT)
     try:
         state.prediction_count = max(1, min(int(prediction_count), 10))
@@ -309,12 +311,14 @@ async def audio_pcm(sid, data: bytes):
                     room=sid,
                 )
 
-                # Cancel stale prediction and stream a new one non-blocking
-                if state.prediction_task and not state.prediction_task.done():
-                    state.prediction_task.cancel()
-                state.prediction_task = asyncio.create_task(
-                    stream_llm_prediction(sid, state.context, state.full_transcript)
-                )
+                # Only start a new prediction when Claude is free and new words arrived
+                new_word_count = len(state.full_transcript.split())
+                task_is_free = state.prediction_task is None or state.prediction_task.done()
+                if new_word_count > state.last_predicted_word_count and task_is_free:
+                    state.last_predicted_word_count = new_word_count
+                    state.prediction_task = asyncio.create_task(
+                        stream_llm_prediction(sid, state.context, state.full_transcript)
+                    )
 
             total_ms = (time.perf_counter() - total_start) * 1000.0
             buffered_seconds = len(state.active_buffer) / SAMPLE_RATE

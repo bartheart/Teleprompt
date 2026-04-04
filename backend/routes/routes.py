@@ -130,7 +130,7 @@ def _bigram_fallback(context: str, transcript_text: str, count: int) -> List[str
 
 async def stream_llm_prediction(sid: str, context: str, transcript_text: str) -> None:
     """
-    Fire-and-forget coroutine. Streams a 4-8 word phrase from Claude Haiku,
+    Fire-and-forget coroutine. Streams a 1-3 word nudge from Claude Haiku,
     emitting progressive `predictions` updates as tokens arrive.
     Falls back to bigram predictions silently on any failure or missing key.
     """
@@ -140,23 +140,25 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
         return
 
     system_prompt = (
-        "You are a real-time speech assistant helping a speaker recover their train of "
-        "thought mid-sentence. Given the speaker's preparation notes (context) and what "
-        "they have said so far (transcript), complete their next thought with a natural, "
-        "fluent phrase of exactly 4 to 8 words. Output ONLY the phrase — no punctuation, "
-        "no explanation, no quotation marks."
+        "You are a real-time speech assistant. A speaker has blanked mid-sentence and needs a nudge.\n\n"
+        "Your job: predict the next 1 to 3 words — the minimum needed to get them speaking again. "
+        "Choose the count dynamically: 1 word if the continuation is obvious, up to 3 if more context helps.\n\n"
+        "Scope: treat the speaker's context notes as the domain for the conversation. "
+        "Stay strictly within that domain when predicting. "
+        "If no context is given, infer the topic from the transcript.\n\n"
+        "Output ONLY the words — no punctuation, no explanation, no quotes."
     )
     user_message = (
-        f"Context (speaker's notes):\n{context or '(none)'}\n\n"
-        f"Transcript so far:\n{transcript_text or '(none)'}\n\n"
-        "Continue the speaker's next phrase (4-8 words):"
+        f"Speaker's topic and domain (scope for all predictions):\n{context or '(none)'}\n\n"
+        f"What the speaker has said so far:\n{transcript_text or '(none)'}\n\n"
+        "Next words (1-3):"
     )
 
     accumulated = ""
     try:
         async with _anthropic_client.messages.stream(
             model="claude-haiku-4-5",
-            max_tokens=24,
+            max_tokens=12,
             temperature=0.4,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],

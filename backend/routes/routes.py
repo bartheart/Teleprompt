@@ -155,6 +155,8 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
     )
 
     accumulated = ""
+    prediction_start = time.perf_counter()
+    first_token = True
     try:
         async with _anthropic_client.messages.stream(
             model="claude-haiku-4-5",
@@ -166,7 +168,13 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
             async for text_delta in stream.text_stream:
                 accumulated = (accumulated + text_delta).strip()
                 if accumulated:
-                    await sio.emit("predictions", {"items": [accumulated]}, room=sid)
+                    payload = {"items": [accumulated]}
+                    if first_token:
+                        ttft_ms = round((time.perf_counter() - prediction_start) * 1000)
+                        payload["prediction_ms"] = ttft_ms
+                        logger.info("prediction_ttft_ms=%d sid=%s", ttft_ms, sid)
+                        first_token = False
+                    await sio.emit("predictions", payload, room=sid)
 
         if not accumulated:
             fallback = _bigram_fallback(context, transcript_text, 1)

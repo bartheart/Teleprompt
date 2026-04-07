@@ -144,7 +144,10 @@ export default function Recorder({
             },
         );
 
-        newSocket.on("predictions", (response: { items?: string[] }) => {
+        newSocket.on("predictions", (response: { items?: string[]; prediction_ms?: number }) => {
+            if (typeof response?.prediction_ms === "number") {
+                console.info(`[latency] prediction_ttft_ms=${response.prediction_ms}`);
+            }
             onPredictions(response?.items ?? []);
         });
 

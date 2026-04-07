@@ -8,6 +8,10 @@ const WAVEFORM_MULTS = [0.5, 0.8, 1.0, 0.8, 0.5];
 const BAR_MIN_H = 3;
 const BAR_MAX_ADD = 38;
 
+const PAUSE_AMPLITUDE_THRESHOLD = 0.05;
+const PAUSE_DURATION_MS = 1200;
+const RESUME_FADEOUT_MS = 500;
+
 function Waveform({ amplitude }: { amplitude: number }) {
   return (
     <div className="waveform" aria-hidden="true">
@@ -32,6 +36,10 @@ export default function Home() {
   const [amplitude, setAmplitude] = useState(0);
   const smoothedAmpRef = useRef(0);
 
+  const [isPaused, setIsPaused] = useState(false);
+  const lastSpeechAtRef = useRef<number>(Date.now());
+  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Persist + apply dark mode
   useEffect(() => {
     const saved = localStorage.getItem("tp-theme");
@@ -53,10 +61,36 @@ export default function Home() {
     setPredictions(items);
   }, []);
 
-  // Smooth amplitude to avoid jittery bars
   const handleAmplitude = useCallback((raw: number) => {
     smoothedAmpRef.current = smoothedAmpRef.current * 0.65 + raw * 0.35;
     setAmplitude(smoothedAmpRef.current);
+
+    const smoothed = smoothedAmpRef.current;
+
+    if (smoothed > PAUSE_AMPLITUDE_THRESHOLD) {
+      // Speaker is talking — record time and clear any pending pause timer
+      lastSpeechAtRef.current = Date.now();
+      if (pauseTimerRef.current) {
+        clearTimeout(pauseTimerRef.current);
+        pauseTimerRef.current = null;
+      }
+      // If we were paused, start fade-out
+      setIsPaused((prev) => {
+        if (prev) {
+          // Schedule reset after fade-out duration
+          setTimeout(() => setIsPaused(false), RESUME_FADEOUT_MS);
+        }
+        return prev; // keep true during fade-out; CSS handles visual
+      });
+    } else {
+      // Below threshold — start/reset pause timer if not already paused
+      if (!pauseTimerRef.current) {
+        pauseTimerRef.current = setTimeout(() => {
+          setIsPaused(true);
+          pauseTimerRef.current = null;
+        }, PAUSE_DURATION_MS);
+      }
+    }
   }, []);
 
   const handleStart = useCallback(() => {
@@ -69,6 +103,11 @@ export default function Home() {
     setIsActive(false);
     setAmplitude(0);
     smoothedAmpRef.current = 0;
+    setIsPaused(false);
+    if (pauseTimerRef.current) {
+      clearTimeout(pauseTimerRef.current);
+      pauseTimerRef.current = null;
+    }
   }, []);
 
   const toggleTheme = useCallback(() => setDark((d) => !d), []);
@@ -118,7 +157,7 @@ export default function Home() {
       </header>
 
       <div className="active-body">
-        <Prompter transcript={transcript} prediction={predictions[0] ?? ""} />
+        <Prompter transcript={transcript} prediction={predictions[0] ?? ""} isPaused={isPaused} />
         <Waveform amplitude={amplitude} />
         <button className="stop-btn" type="button" onClick={handleStop}>
           Stop Listening

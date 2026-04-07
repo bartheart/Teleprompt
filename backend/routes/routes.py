@@ -171,7 +171,13 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
                 words = accumulated.split()
                 if len(words) > MAX_PREDICTION_WORDS:
                     accumulated = " ".join(words[:MAX_PREDICTION_WORDS])
-                    await sio.emit("predictions", {"items": [accumulated]}, room=sid)
+                    payload: dict = {"items": [accumulated]}
+                    if first_token:
+                        ttft_ms = round((time.perf_counter() - prediction_start) * 1000)
+                        payload["prediction_ms"] = ttft_ms
+                        logger.info("prediction_ttft_ms=%d sid=%s", ttft_ms, sid)
+                        first_token = False
+                    await sio.emit("predictions", payload, room=sid)
                     break
                 if accumulated:
                     payload = {"items": [accumulated]}

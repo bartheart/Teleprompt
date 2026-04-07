@@ -85,11 +85,13 @@ async def test_streaming_emits_progressive_phrases(sid):
         mock_sio.emit = capture
         await stream_llm_prediction(sid, "tech talk", "I want to")
 
-    # Stream is capped at MAX_PREDICTION_WORDS (3): emits grow then stop at 3 words
+    # With MAX_PREDICTION_WORDS=3, token 4 (" key") pushes to 4 words → trim and break.
+    # Emits: "think", "think about", "think about the", then trimmed "think about the" on break.
+    assert len(emitted) == 4
     assert emitted[0] == "think"
-    assert len(emitted[-1].split()) <= 3
-    for i in range(1, len(emitted) - 1):
-        assert emitted[i].startswith(emitted[i - 1].rstrip())
+    assert emitted[1] == "think about"
+    assert emitted[2] == "think about the"
+    assert emitted[3] == "think about the"
 
 
 # ---------------------------------------------------------------------------

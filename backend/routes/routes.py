@@ -31,6 +31,7 @@ MAX_BUFFER_SAMPLES = SAMPLE_RATE * 20
 MAX_TRANSCRIPT_HISTORY = 8
 DEFAULT_PREDICTION_COUNT = 5
 SILENCE_RMS_THRESHOLD = 0.01  # float32 normalized; ~-40 dBFS
+MAX_PREDICTION_WORDS = 3
 
 _ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 _anthropic_client: Optional[AsyncAnthropic] = (
@@ -165,8 +166,19 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
         ) as stream:
             async for text_delta in stream.text_stream:
                 accumulated = (accumulated + text_delta).strip()
+                words = accumulated.split()
+                if len(words) > MAX_PREDICTION_WORDS:
+                    accumulated = " ".join(words[:MAX_PREDICTION_WORDS])
+                    await sio.emit("predictions", {"items": [accumulated]}, room=sid)
+                    break
                 if accumulated:
                     await sio.emit("predictions", {"items": [accumulated]}, room=sid)
+
+        # No-repeat guard: if prediction starts with the last spoken word, replace with fallback
+        if accumulated:
+            last_spoken = transcript_text.strip().split()[-1].lower() if transcript_text.strip() else ""
+            if last_spoken and accumulated.lower().split()[0] == last_spoken:
+                accumulated = ""  # will trigger fallback below
 
         if not accumulated:
             fallback = _bigram_fallback(context, transcript_text, 1)

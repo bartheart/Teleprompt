@@ -1,12 +1,15 @@
 type PrompterProps = {
   transcript: string;
   prediction: string;
+  isPaused?: boolean;
 };
 
 const WORD_OPACITIES = [0.25, 0.55, 1];
 
-export default function Prompter({ transcript, prediction }: PrompterProps) {
+export default function Prompter({ transcript, prediction, isPaused = false }: PrompterProps) {
   const words = transcript ? transcript.split(/\s+/).filter(Boolean).slice(-3) : [];
+
+  const predictionClass = isPaused ? "prediction-word--prominent" : "prediction-word--dim";
 
   return (
     <div className="prompter">
@@ -15,7 +18,6 @@ export default function Prompter({ transcript, prediction }: PrompterProps) {
           <span className="transcript-placeholder">Start speaking…</span>
         ) : (
           words.map((word, i) => {
-            // align opacities to the right so the last (current) word is always full opacity
             const opacityIndex = WORD_OPACITIES.length - words.length + i;
             return (
               <span
@@ -32,7 +34,7 @@ export default function Prompter({ transcript, prediction }: PrompterProps) {
 
       <div className="prediction-row">
         {prediction ? (
-          <span className="prediction-word" key={prediction}>
+          <span className={`prediction-word ${predictionClass}`} key="prediction">
             {prediction}
           </span>
         ) : (

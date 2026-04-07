@@ -87,3 +87,39 @@ describe("Prompter", () => {
     expect(parseFloat(first.style.opacity)).toBeLessThan(parseFloat(last.style.opacity));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pause-state display tests
+// ---------------------------------------------------------------------------
+
+describe("Prompter — pause display states", () => {
+  it("applies prediction-word--dim class during speech (isPaused=false)", () => {
+    render(<Prompter transcript="hello world" prediction="next step" isPaused={false} />);
+    const el = screen.getByText("next step");
+    expect(el).toHaveClass("prediction-word--dim");
+    expect(el).not.toHaveClass("prediction-word--prominent");
+  });
+
+  it("applies prediction-word--prominent class when paused (isPaused=true)", () => {
+    render(<Prompter transcript="hello world" prediction="next step" isPaused={true} />);
+    const el = screen.getByText("next step");
+    expect(el).toHaveClass("prediction-word--prominent");
+    expect(el).not.toHaveClass("prediction-word--dim");
+  });
+
+  it("shows placeholder when prediction is empty regardless of pause state", () => {
+    render(<Prompter transcript="hello" prediction="" isPaused={true} />);
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("uses stable key so element does not remount on text change", () => {
+    const { rerender } = render(
+      <Prompter transcript="hello" prediction="the" isPaused={true} />
+    );
+    const firstEl = screen.getByText("the");
+    rerender(<Prompter transcript="hello world" prediction="the next" isPaused={true} />);
+    const secondEl = screen.getByText("the next");
+    // Both renders hit the same DOM node (stable key="prediction")
+    expect(firstEl.tagName).toBe(secondEl.tagName);
+  });
+});

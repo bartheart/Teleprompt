@@ -210,12 +210,25 @@ body {
   align-items: center;
 }
 
+/* base shared styles */
 .prediction-word {
-  font-size: clamp(3rem, 8vw, 5rem);
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--ink);
   line-height: 1;
+}
+
+/* dim state: visible but unobtrusive during speech */
+.prediction-word--dim {
+  font-size: 0.9rem;
+  opacity: 0.25;
+  transition: opacity 200ms ease, font-size 200ms ease;
+}
+
+/* prominent state: full size when speaker has blanked */
+.prediction-word--prominent {
+  font-size: clamp(3rem, 8vw, 5rem);
+  opacity: 1;
   animation: fadeSlideUp 180ms ease-out;
 }
 

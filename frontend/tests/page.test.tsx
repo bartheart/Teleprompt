@@ -1,17 +1,26 @@
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 
 // Mock the Recorder component — it requires WebAudio + Socket.IO
 // Expose onPredictionModel so tests can invoke it directly
 let capturedOnPredictionModel: ((model: string) => void) | undefined;
+let capturedOnAmplitude: ((amp: number) => void) | undefined;
 vi.mock("../components/recorder", () => ({
-  default: (props: { onPredictionModel?: (model: string) => void }) => {
+  default: vi.fn((props: { onPredictionModel?: (model: string) => void; onAmplitude?: (amp: number) => void }) => {
     capturedOnPredictionModel = props.onPredictionModel;
+    capturedOnAmplitude = props.onAmplitude;
     return <div data-testid="recorder-mock" />;
-  },
+  }),
+}));
+
+vi.mock("../app/prompter", () => ({
+  default: vi.fn(() => <div data-testid="prompter-mock" />),
 }));
 
 import Home from "../app/page";
+import Recorder from "../components/recorder";
+import Prompter from "../app/prompter";
 
 // ---------------------------------------------------------------------------
 // localStorage stub (jsdom has it but let's ensure clean state)
@@ -119,5 +128,63 @@ describe("Home — prediction model pill", () => {
     fireEvent.click(screen.getByRole("button", { name: /start teleprompter/i }));
     act(() => { capturedOnPredictionModel?.("basic"); });
     expect(screen.getByText("Basic predictions")).toBeInTheDocument();
+  });
+});
+
+describe("Home — pause detection", () => {
+  it("prediction is dim (not paused) immediately after starting", () => {
+    render(<Home />);
+    fireEvent.click(screen.getByText("Start Teleprompter"));
+    screen.getByText("Stop Listening");
+
+    // Simulate amplitude above threshold — speaker is talking
+    act(() => { capturedOnAmplitude?.(0.8); });
+
+    // We check via Prompter mock — find isPaused=false in its call args
+    const prompterCalls = (Prompter as Mock).mock.calls;
+    const lastCall = prompterCalls.at(-1)?.[0];
+    expect(lastCall?.isPaused).toBe(false);
+  });
+
+  it("isPaused becomes true after 1.2s of low amplitude", () => {
+    vi.useFakeTimers();
+    render(<Home />);
+    fireEvent.click(screen.getByText("Start Teleprompter"));
+    screen.getByText("Stop Listening");
+
+    // Send low amplitude (below threshold 0.05)
+    act(() => { capturedOnAmplitude?.(0.01); });
+
+    // Advance time past pause threshold
+    act(() => { vi.advanceTimersByTime(1300); });
+
+    const prompterCalls = (Prompter as Mock).mock.calls;
+    const lastCall = prompterCalls.at(-1)?.[0];
+    expect(lastCall?.isPaused).toBe(true);
+
+    vi.useRealTimers();
+  });
+
+  it("isPaused returns to false after speaker resumes", () => {
+    vi.useFakeTimers();
+    render(<Home />);
+    fireEvent.click(screen.getByText("Start Teleprompter"));
+    screen.getByText("Stop Listening");
+
+    // Go paused
+    act(() => { capturedOnAmplitude?.(0.01); });
+    act(() => { vi.advanceTimersByTime(1300); });
+
+    // Resume — send high amplitude
+    act(() => { capturedOnAmplitude?.(0.8); });
+
+    // Advance past RESUME_FADEOUT_MS (500ms)
+    act(() => { vi.advanceTimersByTime(600); });
+
+    const prompterCalls = (Prompter as Mock).mock.calls;
+    const lastCall = prompterCalls.at(-1)?.[0];
+    expect(lastCall?.isPaused).toBe(false);
+
+    vi.useRealTimers();
   });
 });

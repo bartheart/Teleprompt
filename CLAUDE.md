@@ -33,5 +33,5 @@ Any feature or improvement that is out of scope for the current task must be cap
 ## Permissions
 
 - Planning mode approval is required before implementation begins.
-- No further permission is needed after plan approval — proceed through steps 2–6 autonomously.
+- No further permission is needed after plan approval — proceed through steps 2–6 autonomously, including all git operations, GitHub CLI commands, and terminal execution.
 - If the plan changes mid-implementation, stop and ask for approval on the revised plan before continuing.

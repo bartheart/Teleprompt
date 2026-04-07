@@ -141,18 +141,22 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
         return
 
     system_prompt = (
-        "You are a real-time speech assistant. A speaker has blanked mid-sentence and needs a nudge.\n\n"
-        "Your job: predict the next 1 to 3 words — the minimum needed to get them speaking again. "
-        "Choose the count dynamically: 1 word if the continuation is obvious, up to 3 if more context helps.\n\n"
-        "Scope: treat the speaker's context notes as the domain for the conversation. "
-        "Stay strictly within that domain when predicting. "
-        "If no context is given, infer the topic from the transcript.\n\n"
-        "Output ONLY the words — no punctuation, no explanation, no quotes."
+        "You are a real-time speech coach. A speaker has blanked mid-sentence and needs a nudge.\n\n"
+        "Predict the next 1–3 words that satisfy BOTH conditions:\n"
+        "1. Natural grammatical continuation of the last words spoken\n"
+        "2. Relevant to the speaker's topic and domain from their context notes\n\n"
+        "Rules:\n"
+        "- Use 1 word if the continuation is unambiguous\n"
+        "- Use 2–3 words if more specificity helps orient the speaker\n"
+        "- Never repeat the last word spoken\n"
+        "- Stay within the domain described in the context notes\n"
+        "- Output ONLY the words — no punctuation, no explanation, no quotes"
     )
+    recent_transcript = " ".join(transcript_text.split()[-30:]) if transcript_text else ""
     user_message = (
-        f"Speaker's topic and domain (scope for all predictions):\n{context or '(none)'}\n\n"
-        f"What the speaker has said so far:\n{transcript_text or '(none)'}\n\n"
-        "Next words (1-3):"
+        f"Speaker's domain and topic (this is the scope — stay within it):\n{context or '(none)'}\n\n"
+        f"Last words spoken:\n{recent_transcript or '(none)'}\n\n"
+        "Continue (1–3 words):"
     )
 
     accumulated = ""
@@ -162,7 +166,7 @@ async def stream_llm_prediction(sid: str, context: str, transcript_text: str) ->
         async with _anthropic_client.messages.stream(
             model="claude-haiku-4-5",
             max_tokens=12,
-            temperature=0.4,
+            temperature=0.2,
             system=system_prompt,
             messages=[{"role": "user", "content": user_message}],
         ) as stream:

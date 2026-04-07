@@ -360,3 +360,119 @@ async def test_subsequent_predictions_events_omit_prediction_ms(sid):
         assert "prediction_ms" not in payload, (
             f"subsequent payload should not have prediction_ms: {payload}"
         )
+
+
+# ---------------------------------------------------------------------------
+# WS2: New prompt assertions
+# ---------------------------------------------------------------------------
+
+def make_capturing_ctx(captured: dict):
+    """Helper that captures kwargs passed to messages.stream and yields a mock stream."""
+    @asynccontextmanager
+    async def _ctx(**kwargs):
+        captured.update(kwargs)
+        mock_stream = MagicMock()
+        mock_stream.text_stream = make_async_text_stream(["next"])
+        yield mock_stream
+    return _ctx
+
+
+@pytest.mark.asyncio
+async def test_prompt_requires_grammatical_continuation(sid):
+    """System prompt explicitly requires grammatical continuation."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "tech podcast", "the main thing about")
+
+    system = captured.get("system", "")
+    assert "grammatical" in system.lower(), f"prompt missing 'grammatical': {system[:200]}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_requires_domain_relevance(sid):
+    """System prompt explicitly requires domain relevance."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "tech podcast", "the main thing about")
+
+    system = captured.get("system", "")
+    assert "domain" in system.lower() or "topic" in system.lower(), \
+        f"prompt missing domain/topic requirement: {system[:200]}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_includes_no_repeat_rule(sid):
+    """System prompt tells Claude never to repeat the last spoken word."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "context", "some transcript")
+
+    system = captured.get("system", "")
+    assert "repeat" in system.lower(), f"prompt missing no-repeat rule: {system[:200]}"
+
+
+@pytest.mark.asyncio
+async def test_transcript_window_capped_at_30_words(sid):
+    """Only the last 30 words of transcript are passed to Claude."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    # Build a transcript longer than 30 words
+    long_transcript = " ".join([f"word{i}" for i in range(50)])  # 50 words
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "context", long_transcript)
+
+    user_content = captured.get("messages", [{}])[0].get("content", "")
+    # The first 20 words (word0..word19) should NOT appear in the user message
+    assert "word0" not in user_content, "full transcript passed — should be last 30 words only"
+    assert "word49" in user_content, "last word of transcript missing from user message"
+
+
+@pytest.mark.asyncio
+async def test_temperature_is_0_point_2(sid):
+    """Claude is called with temperature=0.2."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "context", "some transcript")
+
+    assert captured.get("temperature") == 0.2, \
+        f"expected temperature=0.2, got {captured.get('temperature')}"
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_still_12(sid):
+    """max_tokens remains 12 after prompt update."""
+    captured = {}
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(side_effect=lambda **kw: make_capturing_ctx(captured)(**kw))
+
+    with patch.object(routes_module, "_anthropic_client", mock_client), \
+         patch("routes.routes.sio") as mock_sio:
+        mock_sio.emit = AsyncMock()
+        await stream_llm_prediction(sid, "context", "some transcript")
+
+    assert captured.get("max_tokens") == 12

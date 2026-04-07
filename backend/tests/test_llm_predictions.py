@@ -297,3 +297,64 @@ async def test_max_tokens_is_twelve(sid):
         await stream_llm_prediction(sid, "context", "some transcript")
 
     assert captured_kwargs.get("max_tokens") == 12
+
+
+# ---------------------------------------------------------------------------
+# WS3: Latency profiling — timing fields in predictions payload
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_first_predictions_event_includes_prediction_ms(sid):
+    """The first predictions event includes a prediction_ms timing field."""
+    tokens = ["next", " step"]
+    first_payload = {}
+
+    async def capture(event, data, **_):
+        if event == "predictions" and not first_payload:
+            first_payload.update(data)
+
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(return_value=make_stream_ctx(tokens))
+
+    with (
+        patch.object(routes_module, "_anthropic_client", mock_client),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = capture
+        await stream_llm_prediction(sid, "context", "transcript here")
+
+    assert "prediction_ms" in first_payload, (
+        f"prediction_ms missing from first predictions payload: {first_payload}"
+    )
+    assert isinstance(first_payload["prediction_ms"], (int, float))
+    assert first_payload["prediction_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_subsequent_predictions_events_omit_prediction_ms(sid):
+    """Only the first predictions event carries prediction_ms — subsequent ones do not."""
+    tokens = ["a", " b", " c"]
+    all_payloads = []
+
+    async def capture(event, data, **_):
+        if event == "predictions":
+            all_payloads.append(dict(data))
+
+    mock_client = MagicMock()
+    mock_client.messages.stream = MagicMock(return_value=make_stream_ctx(tokens))
+
+    with (
+        patch.object(routes_module, "_anthropic_client", mock_client),
+        patch("routes.routes.sio") as mock_sio,
+    ):
+        mock_sio.emit = capture
+        await stream_llm_prediction(sid, "context", "transcript")
+
+    assert len(all_payloads) >= 2, "need at least 2 emit calls to test this"
+    # First has prediction_ms
+    assert "prediction_ms" in all_payloads[0]
+    # Rest do not
+    for payload in all_payloads[1:]:
+        assert "prediction_ms" not in payload, (
+            f"subsequent payload should not have prediction_ms: {payload}"
+        )

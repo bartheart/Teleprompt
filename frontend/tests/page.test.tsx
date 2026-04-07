@@ -164,4 +164,27 @@ describe("Home — pause detection", () => {
 
     vi.useRealTimers();
   });
+
+  it("isPaused returns to false after speaker resumes", () => {
+    vi.useFakeTimers();
+    render(<Home />);
+    fireEvent.click(screen.getByText("Start Teleprompter"));
+    screen.getByText("Stop Listening");
+
+    // Go paused
+    act(() => { capturedOnAmplitude?.(0.01); });
+    act(() => { vi.advanceTimersByTime(1300); });
+
+    // Resume — send high amplitude
+    act(() => { capturedOnAmplitude?.(0.8); });
+
+    // Advance past RESUME_FADEOUT_MS (500ms)
+    act(() => { vi.advanceTimersByTime(600); });
+
+    const prompterCalls = (Prompter as Mock).mock.calls;
+    const lastCall = prompterCalls.at(-1)?.[0];
+    expect(lastCall?.isPaused).toBe(false);
+
+    vi.useRealTimers();
+  });
 });

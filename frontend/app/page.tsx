@@ -37,8 +37,8 @@ export default function Home() {
   const smoothedAmpRef = useRef(0);
 
   const [isPaused, setIsPaused] = useState(false);
-  const lastSpeechAtRef = useRef<number>(Date.now());
   const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Persist + apply dark mode
   useEffect(() => {
@@ -68,17 +68,18 @@ export default function Home() {
     const smoothed = smoothedAmpRef.current;
 
     if (smoothed > PAUSE_AMPLITUDE_THRESHOLD) {
-      // Speaker is talking — record time and clear any pending pause timer
-      lastSpeechAtRef.current = Date.now();
+      // Speaker is talking — clear any pending pause timer
       if (pauseTimerRef.current) {
         clearTimeout(pauseTimerRef.current);
         pauseTimerRef.current = null;
       }
       // If we were paused, start fade-out
       setIsPaused((prev) => {
-        if (prev) {
-          // Schedule reset after fade-out duration
-          setTimeout(() => setIsPaused(false), RESUME_FADEOUT_MS);
+        if (prev && !resumeTimerRef.current) {
+          resumeTimerRef.current = setTimeout(() => {
+            setIsPaused(false);
+            resumeTimerRef.current = null;
+          }, RESUME_FADEOUT_MS);
         }
         return prev; // keep true during fade-out; CSS handles visual
       });
@@ -107,6 +108,10 @@ export default function Home() {
     if (pauseTimerRef.current) {
       clearTimeout(pauseTimerRef.current);
       pauseTimerRef.current = null;
+    }
+    if (resumeTimerRef.current) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
     }
   }, []);
 

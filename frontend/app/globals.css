@@ -232,13 +232,6 @@ body {
   animation: fadeSlideUp 180ms ease-out;
 }
 
-/* fadeout state: applied when speaker resumes */
-.prediction-word--fadeout {
-  font-size: 0.9rem;
-  opacity: 0;
-  transition: opacity 500ms ease, font-size 300ms ease;
-}
-
 .prediction-placeholder {
   font-size: clamp(3rem, 8vw, 5rem);
   font-weight: 700;
